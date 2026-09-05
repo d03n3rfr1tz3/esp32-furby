@@ -124,16 +124,37 @@ Understanding the original hardware matters because we are reusing its mechanics
 
 ### 3.3 The infrared protocol
 
-Furby-to-Furby communication uses a simple pulse-distance encoding:
+The protocol is **fully reconstructed and verified** — see
+[Appendix A3](#a3-the-infrared-protocol-decoded) for the derivation and the verification. In
+short:
 
-- a **`1` bit** = 200 µs mark, 800 µs space, 200 µs mark, 800 µs space
-- a **`0` bit** = 200 µs mark, 1800 µs space
+**Bit encoding.** Every bit is one or two IR pulses of the same length, distinguished by the gap
+that follows:
 
-1998 Furbys understand 16 messages; later models (Furby Babies, Shelby) add 16 more while
-remaining backward compatible. The 14 raw code arrays captured in the legacy `config.h`
-(`HELLO1-3`, `PARTY1-2`, `DANCE1-2`, `SLEEP1`, `YAWN1`, `HIDE1-2`, `JOKE1`, `YOUSING1`,
-`MESING1`) are consistent with this: marks around 275 µs, spaces of either ~275 µs or ~850 µs.
-They are preserved verbatim in [Appendix A](#a3-captured-infrared-codes).
+- a **`1` bit** = pulse, short gap, pulse, short gap  *(two pulses)*
+- a **`0` bit** = pulse, long gap  *(one pulse; the long gap is two short gaps in a row)*
+
+**Frame.** A start bit (always `1`) followed by **8 data bits, least significant bit first**. The
+data byte carries the message number `N` twice:
+
+```
+bit  7 6 5 4 | 3 2 1 0
+     ~N      |   N        high nibble = N inverted (a checksum), low nibble = the message number
+```
+
+A frame is therefore fully determined by its message number — nothing has to be stored per
+message. The transmitter repeats each frame **6 times** with roughly 83 ms between packets.
+
+**Message numbers.** 1998 Furbys understand **16 messages, numbered 0–15**; later models (Furby
+Babies, Shelby) add 16 more while remaining backward compatible. Of the 16, **14 were captured**
+in the legacy `config.h`, and the remaining two — **#2 and #8** — have been reconstructed from
+the encoding rule. Their raw timings are known; what they *mean* is not. See
+[Appendix A3](#a3-the-infrared-protocol-decoded) for the full table.
+
+> Consequence for [F-30](#f-30--infrared-receive) / [F-31](#f-31--infrared-transmit): the codec
+> is a handful of lines of arithmetic, not a table of 32 raw arrays. Decoding also gets a free
+> integrity check — a frame whose high nibble is not the inverse of its low nibble is noise, not
+> a Furby.
 
 ### 3.4 Original behaviour — what we take and what we leave
 
@@ -579,25 +600,27 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 #### F-30 — Infrared receive
 
 - **Goal:** recognise Furby-to-Furby messages from another Furby.
-- **Description:** raw IR timings are captured and matched against the known Furby message
-  table. Matching must be tolerant — the legacy sketch used a ±30 % (minimum 100 µs) window with
-  a sliding match, which is the reference approach ([Appendix A](#a4-infrared-matching)).
-  Recognised messages are surfaced as named events; unrecognised bursts are logged raw so the
-  table can be extended.
-- **Acceptance:** a second Furby (or a replay of a captured code) is recognised by name; ordinary
-  household remotes do not produce false matches; unknown codes appear in the log in a form that
-  can be pasted back into the table.
+- **Description:** raw IR timings are captured and **decoded**, not pattern-matched: classify each
+  gap as short or long, assemble the start bit plus 8 data bits, and validate that the high
+  nibble is the inverse of the low nibble ([§3.3](#33-the-infrared-protocol)). The result is a
+  message number 0–15, surfaced as a named event. A failed checksum means "not a Furby" and is
+  discarded. Only the short/long gap threshold needs tuning against the real receiver.
+- **Acceptance:** a second Furby (or a replay of a captured code) is recognised by its message
+  number and name; ordinary household remotes are rejected by the checksum rather than
+  mis-recognised; all 16 numbers decode, including the two that were never captured.
 - **Depends on:** F-01.
 - **Milestone:** M6.
 
 #### F-31 — Infrared transmit
 
 - **Goal:** send Furby messages to another Furby.
-- **Description:** transmit any message from the table as raw timings on the forehead IR LED.
+- **Description:** transmit any of the 16 messages on the forehead IR LED, **generated from its
+  number** rather than replayed from a stored array, repeated 6 times as the original does.
   Triggerable from Home Assistant and from the reaction table.
-- **Acceptance:** a second Furby reacts to a transmitted `HELLO`; our own receiver
-  ([F-30](#f-30--infrared-receive)) recognises our own transmission in a loopback test.
-- **Depends on:** F-30 (shares the code table).
+- **Acceptance:** a second Furby reacts to a transmitted greeting; our own receiver
+  ([F-30](#f-30--infrared-receive)) recognises our own transmission in a loopback test; all 16
+  numbers transmit, which is also the opportunity to discover what messages **#2 and #8** mean.
+- **Depends on:** F-30 (shares the codec).
 - **Milestone:** M6.
 
 ### Audio & Voice
@@ -941,6 +964,10 @@ esp32-furby/
    a custom-trained German model.
 6. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
    [F-31](#f-31--infrared-transmit), or do we test against recorded codes only?
+7. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
+   ([A3](#a3-the-infrared-protocol-decoded)), but not what they say. Two ways to find out:
+   transmit them at a real Furby and watch, or mine the original source listing
+   ([A8](#a8-sources)) once it is reachable.
 
 ### 13.3 Resolved decisions
 
@@ -991,35 +1018,82 @@ Direction change procedure, worth keeping — it prevents shoot-through and gear
 3. Set the new direction pin HIGH (the other stays LOW).
 4. Apply the running duty.
 
-### A3. Captured infrared codes
+### A3. The infrared protocol, decoded
 
-Fourteen Furby-to-Furby messages, captured as raw mark/space timings in microseconds. All are
-27 entries long; marks are ~275 µs, spaces are either ~275 µs or ~850 µs.
+The legacy `config.h` held 14 raw timing arrays with no explanation of what they encoded. They
+have since been decoded completely, and the protocol is now specified rather than copied.
 
-```c
-irHELLO1   = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 850, 275, 850, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275 };
-irHELLO2   = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 850, 275, 850, 275, 850, 275, 275, 275, 275, 275, 275, 275 };
-irHELLO3   = { 275, 275, 275, 275, 275, 850, 275, 850, 275, 850, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275 };
-irPARTY1   = { 275, 275, 275, 275, 275, 850, 275, 850, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275 };
-irPARTY2   = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 850, 275, 850, 275, 275, 275, 275, 275, 850, 275, 275, 275 };
-irDANCE1   = { 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 850, 275, 850, 275, 275, 275 };
-irDANCE2   = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 850, 275, 850, 275, 850, 275, 275, 275 };
-irSLEEP1   = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 850, 275, 850, 275 };
-irYAWN1    = { 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 850, 275 };
-irHIDE1    = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 850, 275 };
-irHIDE2    = { 275, 275, 275, 275, 275, 850, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275 };
-irJOKE1    = { 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275 };
-irYOUSING1 = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 850, 275, 850, 275, 275, 275, 275, 275 };
-irMESING1  = { 275, 275, 275, 275, 275, 275, 275, 275, 275, 850, 275, 850, 275, 275, 275, 275, 275, 850, 275, 275, 275, 275, 275, 275, 275, 275, 275 };
+**How it was derived.** `mrtee/furby-ir` (see [Sources](#a8-sources)) contains a PIC assembly
+transmitter for this protocol. Its bit routine emits a pulse, sleeps, conditionally emits a
+second pulse, then sleeps again — which makes a `1` two pulses separated by one sleep, and a `0`
+one pulse followed by two sleeps. The frame is a start bit plus 8 bits shifted out right-first
+(`rrf`), i.e. LSB first, and the byte is built by taking the message number, swapping the
+nibbles, inverting the upper four bits and OR-ing them back in — producing `~N` in the high
+nibble as a checksum. Each frame is sent 6 times.
+
+**How it was verified.** Applying that rule to all 14 captured arrays yields a valid checksum
+(`high == ~low`) in **14 of 14** cases, and re-encoding each message number reproduces the
+captured array **byte for byte**. Independently, message #5 decodes to `PARTY2`, matching the
+documented fact that message #5 is "Party!". The chance of 14 independent arrays satisfying a
+4-bit checksum by luck is 16⁻¹⁴.
+
+**Generating a frame** for message number `N` (0–15):
+
+```
+byte  = ((~N & 0x0F) << 4) | (N & 0x0F)
+frame = [1] + [ (byte >> i) & 1  for i in 0..7 ]     # start bit, then LSB first
+raw   = for each bit:  1 -> mark, short gap, mark, short gap
+                       0 -> mark, long gap
 ```
 
-The original protocol defines 16 messages; these 14 are what was captured. Two remain to be
-found, plus the 16 later-generation messages if a Furby Baby or Shelby is ever available.
+Drop the trailing gap: a receiver ends the capture on timeout, so a captured frame is 27
+entries — 14 marks and 13 gaps. In the captured data a mark and a short gap are ~275 µs and a
+long gap ~850 µs; treat these as *observed* values and re-measure rather than hard-coding them,
+since only the short/long ratio is structural.
+
+**The message table.** Numbers and checksums are derived; the names come from the legacy
+capture; the meaning column is what the name implies, not independently confirmed.
+
+| # | Byte | Legacy name | Presumed meaning |
+| ---: | --- | --- | --- |
+| 0 | `0xF0` | `HELLO3` | Greeting |
+| 1 | `0xE1` | `HELLO1` | Greeting |
+| 2 | `0xD2` | *(reconstructed)* | **Unknown** |
+| 3 | `0xC3` | `HELLO2` | Greeting |
+| 4 | `0xB4` | `PARTY1` | Party |
+| 5 | `0xA5` | `PARTY2` | Party — confirmed as "Party!" by an external source |
+| 6 | `0x96` | `DANCE1` | Dance |
+| 7 | `0x87` | `DANCE2` | Dance |
+| 8 | `0x78` | *(reconstructed)* | **Unknown** |
+| 9 | `0x69` | `MESING1` | "Me sing" |
+| 10 | `0x5A` | `JOKE1` | Joke |
+| 11 | `0x4B` | `YOUSING1` | "You sing" |
+| 12 | `0x3C` | `HIDE2` | Hide and seek |
+| 13 | `0x2D` | `HIDE1` | Hide and seek |
+| 14 | `0x1E` | `YAWN1` | Yawn |
+| 15 | `0x0F` | `SLEEP1` | Sleep |
+
+**The two previously missing codes.** Generated from the rule above and therefore as reliable as
+the 14 that round-trip exactly — but **their meaning is unknown**, and they have never been sent
+at a real Furby. Verify before relying on them.
+
+```c
+// message #2 — byte 0xD2, frame 1 01001011
+const uint16_t irUNKNOWN2[] PROGMEM = { 275U, 275U, 275U, 275U, 275U, 850U, 275U, 275U, 275U, 275U, 275U, 850U, 275U, 850U, 275U, 275U, 275U, 275U, 275U, 850U, 275U, 275U, 275U, 275U, 275U, 275U, 275U };
+
+// message #8 — byte 0x78, frame 1 00011110
+const uint16_t irUNKNOWN8[] PROGMEM = { 275U, 275U, 275U, 275U, 275U, 850U, 275U, 850U, 275U, 850U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U, 275U };
+```
+
+Note that #2 sits between two greetings (#1 and #3) and #8 between the dance and sing groups, so
+both plausibly belong to those clusters — but that is inference from neighbours, not evidence.
+
+The original 14 arrays remain in the legacy `config.h` in the project history; they are no
+longer worth carrying forward, since any of the 16 frames is now generated from its number.
 
 ### A4. Infrared matching
 
-The legacy matcher is worth keeping in principle: rather than decoding to bits, it slides the
-candidate pattern along the captured raw buffer and accepts a timing as matching when it falls
+The legacy matcher slid the candidate pattern along the captured buffer and accepted a timing
 within a tolerance window:
 
 ```
@@ -1027,10 +1101,11 @@ tolerance = expected * 30 %      (but never less than 100 µs)
 match     = expected - tolerance < actual < expected + tolerance
 ```
 
-On a mismatch the match index resets to zero and the scan continues — a simple sliding-window
-matcher that tolerates a noisy leading edge. It is robust and cheap; the main improvement to
-make is decoding to the underlying bits (per [§3.3](#33-the-infrared-protocol)) so that all 32
-messages can be handled from a compact table instead of 32 raw arrays.
+On a mismatch the match index reset to zero and the scan continued — a sliding-window matcher
+that tolerates a noisy leading edge. It is robust and cheap, but obsolete: now that the frame
+format is known ([A3](#a3-the-infrared-protocol-decoded)), the receiver should classify each gap
+as short or long, assemble the 9 bits, and validate the nibble checksum. That is cheaper, works
+for all 16 messages without a table, and rejects non-Furby signals outright.
 
 ### A5. Quiet hours and volume schedule
 
@@ -1058,6 +1133,17 @@ noting so the bug is not reproduced.)
 | Hand-rolled WiFi scan/connect logic | Provided by the framework |
 | Daily scheduled restart | A workaround for leaks; NFR-5 requires fixing the cause instead |
 | `setCpuFrequencyMhz(80)` | Audio work needs the headroom |
+
+### A8. Sources
+
+External material this document draws on, so the reasoning can be re-checked later.
+
+| Source | Used for |
+| --- | --- |
+| [Furby 1998 source code](https://archive.org/details/furby-source) — the original SPC81A assembly listing by David Hampton and Wayne Schulz, scanned by Sean Riddle (also as [PDF](https://www.seanriddle.com/furbysource.pdf) and as [plain text](https://archive.org/stream/furby-source/furbysource_djvu.txt)) | The authoritative reference for original firmware behaviour. **Not yet consulted** — archive.org is unreachable from the development session's network, which is restricted to GitHub and a few other hosts. Worth mining later for cam positions, sensor timings and the meaning of IR messages #2 and #8. |
+| [`mrtee/furby-ir`](https://github.com/mrtee/furby-ir) — PIC assembly transmitter for the Furby IR protocol | The bit encoding, frame layout, nibble checksum and repeat behaviour that made [A3](#a3-the-infrared-protocol-decoded) possible. |
+| [`d03n3rfr1tz3/TTGO.T-Watch.2020`](https://github.com/d03n3rfr1tz3/TTGO.T-Watch.2020) | The voice assistant building blocks in [Appendix B](#appendix-b--reusable-from-the-t-watch-project). |
+| [ESPHome documentation](https://esphome.io) (`esphome/esphome-docs`) | The framework constraints in [ARCH-D1](#5-architecture-decision-arch-d1--framework) — notably that the internal microphone ADC and internal DAC are no longer supported. |
 
 ---
 
