@@ -525,18 +525,38 @@ microphone, since both then share one I²S clock domain.
 
 #### HW-D4 — Motor driver
 
+**Reframed 2026-09-07: this is an identification task, not a selection.** The legacy sketch
+already drove the motor cleanly, so a working driver is physically in the build — it just is not
+recorded anywhere.
+
+**What the legacy sketch proves.** [A1](#a1-legacy-pin-map) shows three logic pins to the motor
+(PWM on GPIO13 via LEDC, forward on 12, backward on 14) and [A2](#a2-motor-drive-parameters) has
+the complete drive parameters. An ESP32 GPIO sources at most ~40 mA, far below a gearmotor's
+running current and nowhere near its stall current, and the original H-bridge left with the
+mainboard — so **the motor was never connected directly to the ESP32**. A driver module sits in
+between.
+
+**What to identify:** which part it is. The three-pin scheme (PWM + two direction inputs) matches
+a TB6612FNG or an L298N (ENA + IN1 + IN2). It does *not* match a DRV8833, which takes two PWM
+inputs and has no separate enable.
+
 | Option | Notes |
 | --- | --- |
-| **DRV8833** | Small, 1.5 A per channel, built-in current limiting, fine for a toy gearmotor. Two PWM inputs (no separate enable). |
-| **TB6612FNG** | Very common, PWM + two direction pins — matches the legacy wiring 1:1. |
+| **The driver already installed** | Almost certainly the answer. It works, and [A2](#a2-motor-drive-parameters) transfers to it unchanged. Confirm the part and record it in `docs/hardware.md`. |
+| **TB6612FNG** | The replacement to choose if the installed part turns out to be unsuitable — it matches the existing three-pin scheme 1:1. |
 | **Original H-bridge** | Was part of the removed mainboard. Not available. |
 
-**Measurement task:** measure the motor's stall current and no-load current to size the driver
-and the supply.
+**Still open despite that** — two things the working motor does *not* settle:
 
-**Recommendation:** **TB6612FNG** — it matches the existing three-pin drive scheme
-(PWM + forward + backward) from the legacy sketch, so [Appendix A](#a2-motor-drive-parameters)
-transfers directly.
+- **Stall and no-load current still need measuring**, but for [HW-D5](#hw-d5--power), not for the
+  driver: they size the Qi budget, the battery's buffering role and the bulk capacitance. "It ran
+  cleanly" was measured on a bench supply; the new load case is motor inrush **plus** WiFi
+  transmit **plus** a 5 W wireless source.
+- **Closed-loop positioning is not solved.** The legacy sketch carried only *stubs* for the cam
+  position sensor ([§2.1](#21-the-original-project)), so encoder counting, homing against the sync
+  switch and stall detection were never implemented. That is the hard part of
+  [F-10](#f-10--motor-control-with-homing) and it remains entirely ahead of us. The sketch saves
+  us the motor drive, not the motion control.
 
 #### HW-D5 — Power
 
@@ -665,7 +685,7 @@ already wired in?" — confirm before designing [F-22](#f-22--eye-lighting).
 
 | ID | Milestone | Contents | Exit criterion |
 | --- | --- | --- | --- |
-| **M0** | Decisions & measurements | ARCH-D1/D2/D3 ✅, HW-D1/D5/D7 ✅; remaining: ARCH-D4, HW-D2, HW-D3, HW-D4, HW-D6, HW-D8 | All decisions resolved and recorded in §13 |
+| **M0** | Decisions & measurements | ARCH-D1/D2/D3 ✅, HW-D1/D5/D7 ✅; remaining: ARCH-D4, HW-D2, HW-D3, HW-D4, HW-D6, HW-D8. Includes the **bench prototype** in [§8.1](#81-the-bench-prototype-m0) | All decisions resolved and recorded in §13, each measurement-gated one backed by a number from the bench |
 | **M1** | Foundation | F-01, F-02 | Device boots, is reachable, can be updated over the air |
 | **M2** | Motion | F-10, F-11, F-20, F-21, F-22 | The Furby homes, holds named poses, and reacts physically to touch |
 | **M3** | Audio & voice | F-40, F-41, F-42, F-45 | The Furby is a Wyoming satellite in Home Assistant and a full voice interaction works end to end, push-to-talk and docked wake word |
@@ -674,6 +694,34 @@ already wired in?" — confirm before designing [F-22](#f-22--eye-lighting).
 | **M6** | Polish & robustness | F-30, F-31, F-70, F-71, F-72 | IR works; the device survives abuse and long uptimes |
 
 IR (F-30/F-31) is deliberately late: it is delightful but not on the critical path.
+
+### 8.1 The bench prototype (M0)
+
+Four decisions — [HW-D2](#hw-d2--microphone), [HW-D3](#hw-d3--speaker-and-amplifier),
+[HW-D4](#hw-d4--motor-driver) and [HW-D5](#hw-d5--power) — are gated on numbers that no
+specification can supply. The estimates recorded against them are reasoning, not results. So M0
+gets a deliverable of its own: **a deliberately crude rig on the bench, built to answer those
+questions and then thrown away.**
+
+It is *not* the Furby. Nothing is mounted, nothing is tidy, no enclosure is involved. It exists to
+produce measurements.
+
+| It must be able to | So that we can settle |
+| --- | --- |
+| Capture from a microphone and report the level in dBFS, with switchable gain | [HW-D2](#hw-d2--microphone) — record the original electret through a preamp, close-talk **and** at ~1 m, and compare it against an I²S MEMS part on the same rig |
+| Play an audio file through a speaker | [HW-D3](#hw-d3--speaker-and-amplifier) — judge a TTS sample through the original transducer for *intelligibility*, and compare the internal-DAC path against an I²S amplifier |
+| Drive the motor with the [A2](#a2-motor-drive-parameters) parameters while current is measured | [HW-D4](#hw-d4--motor-driver) / [HW-D5](#hw-d5--power) — no-load, running and stall current, plus the inrush peak with WiFi transmitting |
+| Read the cam encoder and the sync switch and count edges | Confirm the ≈ 416 steps per revolution from [§3.1](#31-mechanics) and that the sync switch gives a repeatable zero — the one thing the legacy sketch never proved |
+
+**Deliverable:** the numbers, written into `docs/hardware.md`, and the four decisions closed in
+[§13](#13-open-questions--decision-log) on the strength of them. Prototype code is throwaway and
+does not have to meet [F-02](#f-02--repository-layout-build-and-validation); it should live
+clearly separated from the firmware so nobody mistakes it for the real thing.
+
+**Sequence note.** The rig needs a working build first, so a minimal
+[F-02](#f-02--repository-layout-build-and-validation) skeleton comes before it — but only the
+skeleton. Everything else in M1 waits until M0's numbers are in, because
+[HW-D1](#hw-d1--mcu-choice)'s reopening clause and the pin map both depend on them.
 
 ---
 
@@ -1184,7 +1232,7 @@ deliberately emptied before sharing and stays that way.
 | [ARCH-D4](#56-arch-d4--control-and-event-transport) | Control and event transport | F-50, F-62, F-63, §10 | Open — MQTT with HA discovery recommended; resolve before M4 |
 | [HW-D2](#hw-d2--microphone) | Original electret vs. MEMS microphone | F-41 | Open — measurement pending; estimate favours MEMS given HW-D7 |
 | [HW-D3](#hw-d3--speaker-and-amplifier) | Speaker and amplifier path | F-40 | Open — measurement pending; estimate favours original transducer + I²S amp |
-| [HW-D4](#hw-d4--motor-driver) | Motor driver | F-10 | Open — leaning TB6612FNG, needs stall current |
+| [HW-D4](#hw-d4--motor-driver) | Motor driver | F-10 | Open, but reduced to identifying the driver already installed — the legacy sketch drove the motor cleanly through it |
 | [HW-D6](#hw-d6--gpio-budget) | GPIO budget / port expander | All | Open — depends on enclosure |
 | [HW-D8](#hw-d8--eye-leds) | Eye LED type | F-22 | Open — confirm what is already wired |
 
@@ -1198,19 +1246,23 @@ deliberately emptied before sharing and stays that way.
    must be calibrated against the actual gearbox. Is a reference table from the original
    available, or do we measure all of them empirically during M2?
 3. **Eye LED wiring.** What is already installed — addressable or discrete? ([HW-D8](#hw-d8--eye-leds))
-4. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
+4. **Motor driver part.** Which driver module is physically in the build? The legacy sketch drove
+   the motor cleanly on three logic pins, so one is there ([HW-D4](#hw-d4--motor-driver)); the
+   part number was never written down. Same shape as question 3 — read it off the board.
+5. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
    [F-31](#f-31--infrared-transmit), or do we test against recorded codes only?
-5. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
+6. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
    ([A3](#a3-the-infrared-protocol-decoded)), but not what they say. Two ways to find out:
    transmit them at a real Furby and watch, or mine the original source listing
    ([A8](#a8-sources)) once it is reachable.
-6. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
+7. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
    ([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)) — does the device announce itself over
    zeroconf, or is it added manually by host and port? The manual route is simpler to build and
    needs a fixed address; zeroconf is friendlier and survives a DHCP change.
-7. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
+8. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
    The verification task is in [HW-D7](#hw-d7--wake-word-strategy): say "Ok Nabu" twenty times
-   with both models enabled and count. Run it before settling on the phrase.
+   with both models enabled and count. The phrase itself is agreed; this checks it in practice
+   and is cheap to redo if it fails.
 
 ### 13.3 Resolved decisions
 
@@ -1228,7 +1280,7 @@ deliberately emptied before sharing and stays that way.
 | [HW-D5](#hw-d5--power) | **Li-ion + wireless charging, mostly docked.** The battery is a peak buffer for motor inrush, not an energy store | 2026-09-07 |
 | ↳ Battery operation | Yes — this answers the former open question 4 | 2026-09-07 |
 | [HW-D7](#hw-d7--wake-word-strategy) | **Two trigger modes by dock state:** docked → continuous stream with server-side wake word; undocked → push-to-talk on the tummy switch | 2026-09-07 |
-| ↳ Wake word phrase | **"Hey Furby"**, not "Ok Furby" — the shared "Ok" prefix collides with "Ok Nabu" in the same room. This answers the former open question 5, subject to the cross-trigger test | 2026-09-07 |
+| ↳ Wake word phrase | **"Hey Furby"**, not "Ok Furby" — the shared "Ok" prefix collides with "Ok Nabu" in the same room. Agreed; the cross-trigger test remains as verification, not as a condition | 2026-09-07 |
 
 ---
 
