@@ -41,9 +41,13 @@ are tested against.
 
 ### 1.4 How this document is maintained
 
+- **This document describes the current state, never the way there.** When something changes, the
+  affected text is rewritten as if it had always read that way. No corrections, no superseded
+  sections, no dates in the prose — git holds the history.
 - Every feature has a stable ID (`F-nn`). IDs are never reused.
-- Decisions get a stable ID (`ARCH-Dn`, `HW-Dn`) and are resolved in-place in
-  [§13 Decision Log](#13-open-questions--decision-log), never deleted.
+- Decisions get a stable ID (`ARCH-Dn`, `HW-Dn`) and end up as **one line** in
+  [§13 Decision Log](#13-open-questions--decision-log). The decision is never dropped; its
+  history is never kept.
 - When a feature is implemented, its status changes; the description stays as the reference of
   what was agreed.
 - Language: this document and all repository content are **English**. The German phrases in
@@ -70,18 +74,11 @@ preserved in [Appendix A](#appendix-a--salvaged-from-the-legacy-sketch).
 
 ### 2.2 The reference project
 
-`d03n3rfr1tz3/TTGO.T-Watch.2020` already implements a complete Home Assistant voice assistant
-on an ESP32 **without ESPHome**: a WebSocket client for the HA Assist pipeline, a recording
-engine with DSP, a PDM microphone driver and an audio output layer. This proved the
-custom-firmware path viable, which is a large part of why
-[ARCH-D1](#53-arch-d1-resolution) went the way it did.
-
-What it still supplies directly is the **microphone, DSP and audio layer**
-([B3](#b3-audio-dsp-parameters), [B4](#b4-microphone-and-speaker-drivers)). Its **assist
-transport** ([B1](#b1-home-assistant-assist-client), [B2](#b2-audio-framing)) is superseded by
-[ARCH-D2](#54-arch-d2--home-assistant-voice-transport) — see
-[Appendix B](#appendix-b--reusable-from-the-t-watch-project) for what carries over and what does
-not.
+`d03n3rfr1tz3/TTGO.T-Watch.2020` implements a complete Home Assistant voice assistant on an ESP32
+without ESPHome — a recording engine with DSP, a PDM microphone driver and an audio output layer.
+That it works is a large part of why [ARCH-D1](#51-arch-d1--firmware-framework) went the way it
+did, and its microphone, DSP and audio layers transfer directly
+([Appendix B](#appendix-b--reusable-from-the-t-watch-project)).
 
 ### 2.3 Why a rewrite rather than a port
 
@@ -182,9 +179,8 @@ the encoding rule. Their raw timings are known; what they *mean* is not. See
 
 1. **Original parts before add-on modules.** If a part of the 1998 Furby can be kept, keep it.
    An added module needs a concrete reason — not merely "it's the usual way".
-2. **Framework comfort never outranks an original part.** This principle used to read "ESPHome is
-   preferred, not mandatory"; [ARCH-D1](#53-arch-d1-resolution) applied it and landed on custom
-   firmware. The principle itself stands and still decides the cases that come after it.
+2. **Framework comfort never outranks an original part.** A framework that would cost us an
+   original part is the wrong framework.
 3. **Home Assistant owns language.** All text and all voices live in Home Assistant. The device
    holds *behaviour*, not a phrase database. This keeps phrases editable without a reflash.
 4. **One feature per session.** Every feature must be independently testable on real hardware.
@@ -197,144 +193,76 @@ the encoding rule. Their raw timings are known; what they *mean* is not. See
 
 ## 5. Architecture Decisions
 
-| ID | Decision | Status |
+| ID | Decision | Outcome |
 | --- | --- | --- |
-| [ARCH-D1](#51-the-core-tension-arch-d1) | Firmware framework | **Resolved 2026-09-07 — custom firmware (path B)** |
-| [ARCH-D2](#54-arch-d2--home-assistant-voice-transport) | Home Assistant voice transport | **Resolved 2026-09-07 — Wyoming satellite** |
-| [ARCH-D3](#55-arch-d3--framework-flavour-and-toolchain) | Framework flavour and toolchain | **Resolved 2026-09-07 — PlatformIO + Arduino via pioarduino** |
-| [ARCH-D4](#56-arch-d4--control-and-event-transport) | Control and event transport | Open — MQTT with HA discovery recommended |
+| [ARCH-D1](#51-arch-d1--firmware-framework) | Firmware framework | Custom firmware, no ESPHome |
+| [ARCH-D2](#52-arch-d2--home-assistant-voice-transport) | Voice transport | Wyoming satellite |
+| [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain) | Framework flavour and toolchain | PlatformIO + Arduino via `pioarduino` |
+| [ARCH-D4](#54-arch-d4--control-and-event-transport) | Control and event transport | **Open** — MQTT with HA discovery recommended |
 
-### 5.1 The core tension (ARCH-D1)
+### 5.1 ARCH-D1 — Firmware framework
 
-*This comparison and [§5.2](#52-decision-aids) are kept as the record of why ARCH-D1 went the way
-it did. The resolution is in [§5.3](#53-arch-d1-resolution).*
+**Custom firmware.** ESPHome is not used.
 
-The two candidate frameworks differ in exactly the dimension we care most about — *how many
-original parts survive*:
+Two constraints decided it. A wireless charging circuit ([HW-D5](#hw-d5--power)) consumes the
+volume that add-on modules would have needed, and ESPHome mandates a digital microphone and an
+I²S amplifier where custom firmware mandates nothing. On top of that, ESPHome's audio stack is
+weakest exactly where this project is most demanding: no internal microphone ADC, no internal
+DAC.
 
-| | **A: ESPHome** | **B: Custom firmware** (ESP-IDF / Arduino) | **C: Hybrid** (ESPHome + own external components) |
-| --- | --- | --- | --- |
-| Original **analogue electret microphone** | ❌ Not usable. `microphone/i2s_audio` documents `adc_type: internal` as *"no longer supported"*. | ✅ Usable on ESP32 classic via `I2S_MODE_ADC_BUILT_IN` (needs a preamp). | ❌ Same limitation as A for the stock component; would need a custom microphone component. |
-| Original **speaker** via internal DAC | ❌ `speaker/i2s_audio` requires `dac_type: external`. | ✅ ESP8266Audio `AudioOutputI2S(..., INTERNAL_DAC)` on ESP32 classic. | ❌ Same as A unless we write the driver. |
-| Original **speaker driver** (the transducer itself) | ✅ Keep it, drive it from an I²S amp. | ✅ Keep it, either path. | ✅ |
-| On-device wake word | ✅ `micro_wake_word`, essentially free (needs PSRAM → ESP32-S3). | ⚠️ Would have to be integrated by hand, or replaced by push-to-talk / HA-side wake word. | ✅ |
-| Voice assistant pipeline | ✅ `voice_assistant` component, fully maintained. | ⚠️ Own WebSocket client — **but already written** in the T-Watch project. | ✅ |
-| Audio output pipeline (mixing, ducking, resampling) | ✅ `mixer` / `resampler` / `speaker` media player. | ⚠️ Hand-rolled; ESP8266Audio covers playback but not mixing/ducking. | ✅ |
-| Motor control with encoder + sync switch | ⚠️ No stock component — needs a custom external component either way. | ✅ Plain C++. | ✅ Custom external component. |
-| Furby IR codec | ⚠️ `remote_receiver`/`remote_transmitter` handle raw timings; the Furby codec needs custom code. | ✅ Plain C++ (legacy sketch already has a matcher). | ✅ |
-| Home Assistant integration | ✅ Native API, entities for free. | ⚠️ Hand-rolled (WebSocket or MQTT). | ✅ |
-| Ongoing maintenance | ✅ Low — upstream maintains the hard parts. | ❌ High — audio and networking are ours forever. | 🟡 Medium. |
-| Reuse of the T-Watch code | ❌ Little. | ✅ High — assist client, DSP, mic driver, audio layer. | ❌ Little. |
+What it costs:
 
-### 5.2 Decision aids
+- **The audio stack is ours** — capture, DSP, playback and their bugs, maintained here forever.
+  [Appendix B](#appendix-b--reusable-from-the-t-watch-project) is what makes that affordable.
+- **No on-device wake word.** `micro_wake_word` needs ESPHome and an ESP32-S3. Replaced by
+  server-side detection ([HW-D7](#hw-d7--wake-word-strategy)), which costs nothing.
+- **No free Home Assistant entities** — see [ARCH-D4](#54-arch-d4--control-and-event-transport).
 
-Answer these, and the choice follows:
+### 5.2 ARCH-D2 — Home Assistant voice transport
 
-1. **Is keeping the original electret microphone a hard requirement, or a nice-to-have?**
-   If hard → path B on an ESP32 classic. If nice-to-have → A or C are open.
-2. **Does the original speaker sound acceptable at all?** Measure first
-   ([HW-D3](#hw-d3--speaker-and-amplifier)). A 1998 toy speaker reproducing TTS may sound poor
-   enough that the whole "keep the original audio path" argument collapses — in which case
-   path A becomes clearly attractive.
-3. **How much do we want on-device wake word?** It is the single biggest free win of ESPHome.
-   Without it, waking the Furby means pressing its tummy — which is arguably *more* Furby-like.
-4. **How much long-term maintenance appetite is there?** Path B means owning an audio stack.
+**Speak the Wyoming protocol and appear as a real Assist satellite.**
 
-### 5.3 ARCH-D1 resolution
+The alternative is the raw `assist_pipeline/run` WebSocket, which the T-Watch project uses. It
+works and is not deprecated, but a WebSocket client is a *client*, never a satellite, so the
+capabilities that attach to the `assist_satellite` entity — `announce`, `start_conversation`,
+timers, the Voice-assistants UI — never reach it. That ceiling is the reason for the choice, and
+three of its consequences make Wyoming the better fit rather than merely the safer one:
 
-**Decision: path B — custom firmware.** ESPHome and the hybrid path are dropped.
-
-Two constraints that were not on the table when [§5.1](#51-the-core-tension-arch-d1) was written
-settled it:
-
-1. **Space.** A wireless charging circuit is being added ([HW-D5](#hw-d5--power)). It consumes
-   the volume that add-on modules would have needed, so the build has to stay minimal. Path A
-   *mandates* a digital microphone and an I²S amplifier; path B does not mandate anything.
-2. **Audio stack.** ESPHome's audio limitations — no internal microphone ADC, no internal DAC —
-   are the one area where this project is unusually demanding, which makes them close to
-   disqualifying on their own.
-
-#### Why this does not pre-empt HW-D3
-
-Earlier drafts gated ARCH-D1 on [HW-D3](#hw-d3--speaker-and-amplifier), reasoning that a
-disappointing original speaker would make ESPHome attractive. **That coupling pointed the wrong
-way.** Path B works with *either* audio path — internal DAC or I²S amplifier — while path A only
-works with the digital one. Choosing B therefore forecloses nothing that HW-D3 still has to
-decide; it is the option that keeps the most open. The gate is removed rather than overridden,
-and HW-D2/HW-D3 stay open on their own merits.
-
-#### What the decision costs
-
-- **The audio stack is ours.** Capture, DSP, playback and their bugs are maintained in this
-  repository forever. [Appendix B](#appendix-b--reusable-from-the-t-watch-project) is what makes
-  that affordable.
-- **No `micro_wake_word`.** On-device wake word is off the table (it needs ESPHome in practice,
-  and an ESP32-S3). It is replaced by server-side wake word — see
-  [HW-D7](#hw-d7--wake-word-strategy) — which turns out to cost nothing.
-- **No free Home Assistant entities.** The native API is gone with ESPHome; see
-  [ARCH-D4](#56-arch-d4--control-and-event-transport).
-
-### 5.4 ARCH-D2 — Home Assistant voice transport
-
-**Decision: speak the Wyoming protocol and appear as a real Assist satellite.**
-
-| Option | Assessment |
-| --- | --- |
-| **Raw `assist_pipeline/run` WebSocket** (what the T-Watch does) | Viable and not deprecated — the command is unchanged in `home-assistant/core`, carries `wake_word`/`stt`/`intent`/`tts` start stages and the `stt_binary_handler_id` binary framing, and the Home Assistant frontend's own Assist dialog runs on it. Its limitation is structural: a WebSocket client is a *client*, never a satellite, so satellite-only capabilities never reach it. |
-| **Wyoming satellite** *(chosen)* | Home Assistant's `wyoming` integration builds a full `assist_satellite` entity from a Wyoming device, with `announce` implemented and timer events included. It is the versioned protocol explicitly intended for third-party satellites. |
-
-**Rationale.** The risk with the raw WebSocket path is not removal, it is a **ceiling**: new
-satellite features (`announce`, `start_conversation`, timers, the Voice-assistants satellite UI)
-attach to the `assist_satellite` entity platform. Wyoming sits above that ceiling, and three
-consequences make it the better fit here rather than merely the safer one:
-
-- Home Assistant **connects to the satellite** (TCP), so the device holds **no long-lived access
-  token** — [NFR-8](#11-non-functional-requirements) gets easier, not harder.
-- Text-to-speech arrives as **raw PCM chunks**, so no MP3 or WAV decoder is needed on the device
-  for assistant answers (see [F-40](#f-40--audio-output-chain)).
+- Home Assistant **connects to the satellite** over TCP, so the device stores **no access token**
+  ([NFR-8](#11-non-functional-requirements)).
+- Text-to-speech arrives as **raw PCM**, so no MP3 or WAV decoder is needed for assistant answers
+  ([F-40](#f-40--audio-output-chain)).
 - [F-61 `speak()`](#f-61--speak-interface) maps directly onto `assist_satellite.announce`.
 
-**Cost.** [Appendix B1](#b1-home-assistant-assist-client) and
-[B2](#b2-audio-framing) — the T-Watch assist client and its wire format — are largely superseded.
-[B3](#b3-audio-dsp-parameters) and [B4](#b4-microphone-and-speaker-drivers) are unaffected, and
-they are the larger part of the work.
+**Scope limit — read this before designing [§10](#10-home-assistant-interface).** Wyoming solves
+*voice*, not *integration*. A satellite entity provides `assist_satellite` and a wake-word select
+and nothing else: none of the controls in [§10.1](#101-exposed-controls) and none of the events in
+[§10.2](#102-emitted-events) come from it.
 
-**Limit of scope — read this before designing [§10](#10-home-assistant-interface).** Wyoming
-solves *voice*, not *integration*. A Wyoming satellite entity provides `assist_satellite` and a
-wake-word select, and nothing else: none of the controls in
-[§10.1](#101-exposed-controls) and none of the events in [§10.2](#102-emitted-events) come from
-it. That is what [ARCH-D4](#56-arch-d4--control-and-event-transport) is for.
+### 5.3 ARCH-D3 — Framework flavour and toolchain
 
-### 5.5 ARCH-D3 — Framework flavour and toolchain
+**PlatformIO with the Arduino-ESP32 3.x core, via the `pioarduino` platform fork.**
 
-**Decision: PlatformIO with the Arduino-ESP32 3.x core, via the `pioarduino` platform fork.**
+Arduino over ESP-IDF because it maximises reuse of the T-Watch modules and ESP8266Audio works
+directly; the cost is a dependency on a community fork.
 
-| Option | Assessment |
-| --- | --- |
-| **Arduino via `pioarduino`** *(chosen)* | Maximum reuse of the T-Watch modules; ESP8266Audio works directly. |
-| ESP-IDF native | Better control over RAM, DMA and I²S, but ESP8266Audio is lost and more of the port becomes hand work. |
-| Arduino as an ESP-IDF component | Both API sets available, but the fiddliest setup under PlatformIO. |
+That fork is not optional and is load-bearing for
+[F-02](#f-02--repository-layout-build-and-validation): the official
+`platformio/platform-espressif32` still ships the Arduino 2.x core, so `platformio.ini` must name
+`pioarduino/platform-espressif32` explicitly to get 3.x on ESP-IDF 5.5.
 
-**Toolchain note, and it is load-bearing for [F-02](#f-02--repository-layout-build-and-validation):**
-the official `platformio/platform-espressif32` still ships the Arduino 2.x core. Arduino-ESP32
-3.x on ESP-IDF 5.5 comes from the community fork `pioarduino/platform-espressif32`, which
-`platformio.ini` must therefore name explicitly. The dependency on a community fork is the
-accepted price.
+### 5.4 ARCH-D4 — Control and event transport
 
-### 5.6 ARCH-D4 — Control and event transport
-
-**Status: open.** [ARCH-D2](#54-arch-d2--home-assistant-voice-transport) covers voice only, so a
-second transport has to carry the control surface and the events of
-[§10](#10-home-assistant-interface).
+**Open.** [ARCH-D2](#52-arch-d2--home-assistant-voice-transport) covers voice only, so a second
+transport carries the control surface and events of [§10](#10-home-assistant-interface).
 
 | Option | Assessment |
 | --- | --- |
-| **MQTT with Home Assistant discovery** *(recommended)* | Entities appear without writing a Home Assistant integration; events become topics; the legacy sketch already spoke MQTT, so the operational pattern is familiar. Adds a broker as a dependency. |
-| A custom Home Assistant integration over a private WebSocket/HTTP API | Full control over the entity model; a HACS component to write and maintain. |
-| REST endpoints on the device plus `rest_command` / template entities | No broker, but the entity model has to be assembled by hand in YAML, and events need polling or webhooks. |
+| **MQTT with Home Assistant discovery** *(recommended)* | Entities appear without writing a Home Assistant integration; events become topics; the legacy sketch already spoke MQTT. Adds a broker as a dependency. |
+| Custom Home Assistant integration over a private API | Full control over the entity model; a HACS component to write and maintain. |
+| REST on the device plus `rest_command` / template entities | No broker, but the entity model is hand-assembled in YAML and events need polling or webhooks. |
 
-Resolve before [M4](#8-milestones); [F-50](#f-50--mode-manager) is the first feature that needs
-it.
+Resolve before [M4](#8-milestones); [F-50](#f-50--mode-manager) is the first feature that needs it.
 
 ---
 
@@ -386,7 +314,7 @@ unreachable — it can still move, blink and react to touch. It just goes quiet.
 
 ### 6.3 Module boundaries
 
-All modules are plain firmware modules under [ARCH-D1](#53-arch-d1-resolution).
+All modules are plain firmware modules under [ARCH-D1](#51-arch-d1--firmware-framework).
 
 | Module | Responsibility | Implementation |
 | --- | --- | --- |
@@ -394,13 +322,13 @@ All modules are plain firmware modules under [ARCH-D1](#53-arch-d1-resolution).
 | `furby_pose` | Named poses, animation sequencer, talk animation | Plain C++ over `furby_motion` |
 | `furby_sense` | Switch debouncing, light sensor, dock state, derived events | Plain C++; light sensor on ADC1 ([HW-D1](#hw-d1--mcu-choice)) |
 | `furby_ir` | Furby IR codec on top of raw timings | Plain C++; the codec is arithmetic, see [A3](#a3-the-infrared-protocol-decoded) |
-| `furby_audio` | Microphone capture + DSP, speaker output, volume | Own DSP after [B3](#b3-audio-dsp-parameters); ESP8266Audio for RTTTL and diagnostic tones |
+| `furby_audio` | Microphone capture + DSP, speaker output, volume | Own DSP after [B1](#b1-audio-dsp-parameters); ESP8266Audio for RTTTL and diagnostic tones |
 | `furby_assist` | Wyoming satellite server — TCP listener, discovery, event handling | New; reuses `furby_audio` for capture and playback |
 | `furby_persona` | Mode state, reaction table, idle behaviour, speak() entry point | Plain C++ |
-| `furby_link` | Control and event transport to Home Assistant | Per [ARCH-D4](#56-arch-d4--control-and-event-transport) — MQTT with discovery, recommended |
+| `furby_link` | Control and event transport to Home Assistant | Per [ARCH-D4](#54-arch-d4--control-and-event-transport) — MQTT with discovery, recommended |
 
 **Transport split.** `furby_assist` carries voice and announcements
-([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)); `furby_link` carries the controls and
+([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)); `furby_link` carries the controls and
 events of [§10](#10-home-assistant-interface). They are separate connections to the same Home
 Assistant and must not be conflated.
 
@@ -433,37 +361,23 @@ Each decision lists options, the trade-off, a recommendation, and — where rele
 
 #### HW-D1 — MCU choice
 
-**Resolved 2026-09-07: ESP32 classic, WROOM-class module.**
+**ESP32 classic, WROOM-class module.** Chosen because the parts are on hand and familiar and the
+legacy pin map in [Appendix A1](#a1-legacy-pin-map) transfers unchanged — not for any technical
+edge over the S3.
 
-Once [ARCH-D1](#53-arch-d1-resolution) removed ESPHome and
-[HW-D7](#hw-d7--wake-word-strategy) moved wake word detection to the Home Assistant server, the
-ESP32-S3's remaining advantages stopped being decisive:
+The S3 buys little here. Its PSRAM is barely needed (Wyoming streams PCM in chunks, so no
+complete audio file is ever buffered, and the T-Watch runs this audio stack in 520 KB while also
+driving a display), and its on-device wake word is redundant now that detection runs on the
+server ([HW-D7](#hw-d7--wake-word-strategy)). What it genuinely offers is native USB with CDC and
+JTAG — convenient for a device sewn into plush, though OTA covers the normal case.
 
-| S3 advantage | Does it still matter here? |
-| --- | --- |
-| PSRAM | Barely. Wyoming streams PCM in chunks, so no complete audio file is ever buffered; the T-Watch runs the same audio stack in 520 KB of SRAM while also driving a display. |
-| On-device wake word (`esp-sr` / microWakeWord) | No — it runs on the server instead, at no cost to the device. |
-| Native USB (CDC + JTAG) | A genuine convenience: flashing and debugging without a USB-UART bridge, which is worth something for a device sewn into plush. OTA ([F-01](#f-01--base-node), [F-70](#f-70--update-and-recovery)) covers the normal case. |
-| SIMD/DSP instructions | Irrelevant — a high-pass and a limiter at 16 kHz are rounding errors in CPU load. |
-| Cleaner GPIO map | A small advantage; see the ADC2 trap below. |
+**ADC2 trap.** On the classic, ADC2 is unavailable while WiFi is active, so the light sensor
+([F-21](#f-21--light-sensor)) must sit on **ADC1 (GPIO32–39)**, of which GPIO34–39 are
+input-only. Binding on the pin map in [HW-D6](#hw-d6--gpio-budget).
 
-**Decided on:** the classic parts are on hand and familiar, the legacy pin map in
-[Appendix A1](#a1-legacy-pin-map) transfers unchanged, and the S3 no longer buys anything that
-this design needs.
-
-> **Not** decided on "the only chip that can keep the original audio parts" — see the correction
-> in [HW-D3](#hw-d3--speaker-and-amplifier). That argument does not hold, and it should not be
-> repeated.
-
-**ADC2 trap.** On the ESP32 classic, ADC2 is unavailable while WiFi is active. The light sensor
-([F-21](#f-21--light-sensor)) must therefore sit on **ADC1 (GPIO32–39)**, and GPIO34–39 are
-input-only. This constrains the pin map in [HW-D6](#hw-d6--gpio-budget) and must be respected
-from the first wiring diagram.
-
-**Reopening clause:** if [HW-D2](#hw-d2--microphone) and [HW-D3](#hw-d3--speaker-and-amplifier)
-both land on digital parts, the classic's remaining technical edge disappears entirely. The
-decision would still stand on familiarity and stock, but it is then worth a deliberate
-re-confirmation rather than an assumption.
+**Reopening clause.** If [HW-D2](#hw-d2--microphone) and [HW-D3](#hw-d3--speaker-and-amplifier)
+both land on digital parts, the classic has no technical edge left at all. The choice would still
+stand on familiarity and stock, but re-confirm it deliberately rather than by assumption.
 
 #### HW-D2 — Microphone
 
@@ -477,91 +391,76 @@ re-confirmation rather than an assumption.
 sample through a bench preamp and judge whether speech at ~1 m is usable. Judge it **twice**:
 close-talk (push-to-talk) and far-field (always-on wake word) are different bars.
 
-**Estimate, pending measurement (2026-09-07).** No bench access yet, so this is reasoning from
-specifications, not a result:
+**Estimate, pending measurement** — reasoning from specifications, not a result:
 
 | Question | Estimate | Confidence |
 | --- | --- | --- |
-| Original electret for **push-to-talk**? | Plausible. A typical electret capsule sits near −44 dBV/Pa, and the ageing failure mode is gradual loss of sensitivity rather than outright failure. Close-talk through a MAX9814 plus the DSP chain in [B3](#b3-audio-dsp-parameters) should carry it. | medium |
+| Original electret for **push-to-talk**? | Plausible. A typical electret capsule sits near −44 dBV/Pa, and the ageing failure mode is gradual loss of sensitivity rather than outright failure. Close-talk through a MAX9814 plus the DSP chain in [B1](#b1-audio-dsp-parameters) should carry it. | medium |
 | Original electret for **always-on wake word**? | Probably not. Far-field is unforgiving, and the classic's internal ADC is the bottleneck — nominally 12 bit but realistically ~9–10 ENOB and non-linear, needing calibration. A 1998 toy capsule plus a cheap preamp plus a weak ADC is the wrong chain for continuous listening. An I²S MEMS part (~61–65 dB SNR) bypasses both the preamp and the ADC. | medium-high |
 
 **Recommendation:** if [HW-D7](#hw-d7--wake-word-strategy)'s docked wake-word mode is wanted — and
 it is — plan for an **I²S MEMS microphone** and treat the original electret as the pleasant
 surprise rather than the baseline. Note that the T-Watch's gain table reaching **+42 dB** shows
 that heavy gain plus DSP is normal in this class of device — see
-[Appendix B](#b3-audio-dsp-parameters).
+[Appendix B](#b1-audio-dsp-parameters).
 
 #### HW-D3 — Speaker and amplifier
 
 | Option | Pros | Cons |
 | --- | --- | --- |
-| **Original speaker + internal DAC + small amp** (PAM8403 / LM4871) | Keeps the original transducer *and* the original signal path character. Frees three I²S pins. | ESP32 classic + custom firmware only. Internal DAC is 8-bit-ish quality. |
-| **Original speaker + I²S amp** (MAX98357A) | Keeps the transducer; clean digital path; works on every framework and MCU. | One added module (~16 × 14 mm), 3 pins. |
+| **Original speaker + internal DAC + small amp** (PAM8403 / LM4871) | Keeps the original signal path character. Frees three I²S pins. | ESP32 classic only. Internal DAC is 8-bit, with DC offset — speech without dithering is audibly grainy. |
+| **Original speaker + I²S amp** (MAX98357A) | Keeps the transducer; clean digital path; works on every MCU. | One added module (~16 × 14 mm), 3 pins. |
 | **New speaker + I²S amp** | Best audio quality. | Loses an original part; the Furby's speaker cavity constrains size anyway. |
 
-> **Correction (2026-09-07).** Earlier drafts treated the internal DAC as the option that keeps
-> the original audio "without an add-on module". That is wrong: a DAC pin sources a few
-> milliamps and **cannot drive an 8 Ω speaker**, so this path needs an amplifier exactly like the
-> I²S path does — and the original electret needs a preamplifier, because the original one left
-> with the mainboard. **Module count is effectively the same in every variant (~2 small boards).**
-> The internal DAC saves two GPIOs, not a module. This correction removed the main argument that
-> [HW-D1](#hw-d1--mcu-choice) used to rest on.
+**A DAC pin cannot drive an 8 Ω speaker** — it sources a few milliamps, so the internal-DAC path
+needs an amplifier exactly like the I²S path does. Likewise the original electret needs a
+preamplifier, because the original one left with the mainboard. Module count is therefore
+effectively the same in every variant (~2 small boards); the internal DAC saves two GPIOs, not a
+module.
 
 **Measurement task:** measure the original speaker's DC resistance to infer impedance, then drive
 it from a bench amplifier with a TTS sample. **Judge intelligibility, not fidelity** — a Furby is
 allowed to sound like a toy, but the assistant's answers must be understandable.
-*(This no longer gates [ARCH-D1](#53-arch-d1-resolution); it decides HW-D3 alone.)*
 
-**Estimate, pending measurement (2026-09-07):**
-
-| Question | Estimate | Confidence |
-| --- | --- | --- |
-| Keep the original transducer? | Yes. A ~36 mm mylar cone has nothing below its resonance, but 1–3 kHz — where consonants are discriminated — is its *best* region. Text-to-speech will sound thin and tinny and still be intelligible, which is exactly the criterion above. | high |
-| Internal DAC or I²S amplifier? | **I²S amplifier.** The internal DAC is 8-bit, with DC offset and noise on top; speech without dithering is audibly grainy. Given the correction above it saves no module at all. | high |
-
-**Recommendation:** keep the original transducer, drive it from a **MAX98357A-class I²S
-amplifier**. This also keeps the door open if [HW-D2](#hw-d2--microphone) lands on a digital
-microphone, since both then share one I²S clock domain.
+**Estimate, pending measurement:** keep the transducer (a ~36 mm mylar cone has nothing below its
+resonance, but 1–3 kHz — where consonants are discriminated — is its best region, so TTS will be
+thin and tinny yet intelligible), and drive it from a **MAX98357A-class I²S amplifier**. Both
+judgements are high confidence. The I²S route also shares a clock domain with the microphone if
+[HW-D2](#hw-d2--microphone) lands on a digital part.
 
 #### HW-D4 — Motor driver
 
-**Reframed 2026-09-07: this is an identification task, not a selection.** The legacy sketch
-already drove the motor cleanly, so a working driver is physically in the build — it just is not
-recorded anywhere.
+**Which driver is installed, not which to choose.** The legacy sketch drove the motor cleanly, so
+a working driver is in the build; only its part number was never recorded.
 
-**What the legacy sketch proves.** [A1](#a1-legacy-pin-map) shows three logic pins to the motor
-(PWM on GPIO13 via LEDC, forward on 12, backward on 14) and [A2](#a2-motor-drive-parameters) has
-the complete drive parameters. An ESP32 GPIO sources at most ~40 mA, far below a gearmotor's
-running current and nowhere near its stall current, and the original H-bridge left with the
-mainboard — so **the motor was never connected directly to the ESP32**. A driver module sits in
-between.
+[A1](#a1-legacy-pin-map) shows three logic pins to the motor (PWM on GPIO13 via LEDC, forward on
+12, backward on 14). An ESP32 GPIO sources at most ~40 mA, far below a gearmotor's running
+current, and the original H-bridge left with the mainboard — so a driver module sits in between.
+The three-pin scheme (PWM + two direction inputs) matches a TB6612FNG or an L298N (ENA + IN1 +
+IN2), not a DRV8833, which takes two PWM inputs and has no separate enable.
 
-**What to identify:** which part it is. The three-pin scheme (PWM + two direction inputs) matches
-a TB6612FNG or an L298N (ENA + IN1 + IN2). It does *not* match a DRV8833, which takes two PWM
-inputs and has no separate enable.
+**Identification task:** read the part off the board and record it in `docs/hardware.md`. Check at
+the same time whether a **standby/enable pin** (the TB6612FNG has one) is tied high on the
+breakout or sits on a GPIO — if the latter, it is a fourth pin the firmware must drive. Keep the
+installed part unless it proves unsuitable; a TB6612FNG is the drop-in replacement, and it also
+matters for [HW-D5](#hw-d5--power) that an L298N-class part is a poor fit on a battery rail.
 
-| Option | Notes |
-| --- | --- |
-| **The driver already installed** | Almost certainly the answer. It works, and [A2](#a2-motor-drive-parameters) transfers to it unchanged. Confirm the part and record it in `docs/hardware.md`. |
-| **TB6612FNG** | The replacement to choose if the installed part turns out to be unsuitable — it matches the existing three-pin scheme 1:1. |
-| **Original H-bridge** | Was part of the removed mainboard. Not available. |
+**Two things the working motor does not settle:**
 
-**Still open despite that** — two things the working motor does *not* settle:
-
-- **Stall and no-load current still need measuring**, but for [HW-D5](#hw-d5--power), not for the
-  driver: they size the Qi budget, the battery's buffering role and the bulk capacitance. "It ran
-  cleanly" was measured on a bench supply; the new load case is motor inrush **plus** WiFi
-  transmit **plus** a 5 W wireless source.
+- **Stall and no-load current still need measuring**, but for [HW-D5](#hw-d5--power) rather than
+  for the driver: they size the Qi budget, the battery's buffering role and the bulk capacitance.
+  "It ran cleanly" was on a bench supply; the new load case is motor inrush **plus** WiFi transmit
+  **plus** a 5 W wireless source.
 - **Closed-loop positioning is not solved.** The legacy sketch carried only *stubs* for the cam
   position sensor ([§2.1](#21-the-original-project)), so encoder counting, homing against the sync
-  switch and stall detection were never implemented. That is the hard part of
-  [F-10](#f-10--motor-control-with-homing) and it remains entirely ahead of us. The sketch saves
-  us the motor drive, not the motion control.
+  switch and stall detection were never implemented — the hard part of
+  [F-10](#f-10--motor-control-with-homing) is entirely ahead of us. The sketch saves us the motor
+  drive, not the motion control.
 
 #### HW-D5 — Power
 
-**Resolved 2026-09-07: Li-ion battery with a wireless (Qi) charging circuit. Operating model —
-the Furby sits on its charging base most of the time.**
+**Li-ion battery with a wireless (Qi) charging circuit. Operating model — the Furby sits on its
+charging base most of the time.**
 
 The motor's inrush current is the classic cause of ESP32 brownouts in this kind of build, and the
 operating model changes what the battery is *for*:
@@ -582,8 +481,14 @@ operating model changes what the battery is *for*:
   [Appendix C1](#c1-system) sensibly. Budget 1–2 GPIOs in [HW-D6](#hw-d6--gpio-budget) and expose
   it via [F-63](#f-63--diagnostics).
 
-**Open sub-question:** whether the charging circuit is a 5 W (BPP) or 15 W (EPP) receiver. This
-sets the headroom the battery has to cover and should be settled with the part choice.
+**Open sub-questions:**
+
+- Whether the charging circuit is a 5 W (BPP) or 15 W (EPP) receiver. This sets the headroom the
+  battery has to cover and should be settled with the part choice.
+- **Which motor driver is installed** ([HW-D4](#hw-d4--motor-driver)). An L298N-class bipolar
+  bridge drops roughly 2 V across its output stage — on a 3.0–4.2 V cell that is a large share of
+  the supply, and it worsens as the cell drains. A MOSFET driver such as the TB6612FNG does not.
+  If the installed part is bipolar, plan on replacing it for battery operation.
 
 **Risk to design against — permanent charging.** A Li-ion cell held at charge-termination voltage
 indefinitely, next to a Qi coil's waste heat, inside a closed plush enclosure, is the worst case
@@ -634,18 +539,19 @@ enclosure forces a smaller board.
 
 #### HW-D7 — Wake word strategy
 
-**Resolved 2026-09-07: two trigger modes, selected by dock state.**
+**Two trigger modes, selected by dock state.**
 
 | Dock state | Trigger |
 | --- | --- |
 | **Docked** | Continuous audio stream to Home Assistant with the pipeline started at `wake` stage; openWakeWord detects on the server. Hands-free. |
 | **Undocked** | Push-to-talk on the tummy switch only. No streaming, no wake word. |
 
-| Option | Assessment |
-| --- | --- |
-| On-device (`micro_wake_word` / `esp-sr`) | **Excluded** by [ARCH-D1](#53-arch-d1-resolution) and [HW-D1](#hw-d1--mcu-choice) — it needs ESPHome in practice and an ESP32-S3. |
-| **Home Assistant side** *(chosen for docked operation)* | Works on any MCU: the device only streams 16 kHz PCM, which costs it no more than ordinary listening — no PSRAM, no on-device model. The price is continuous streaming, which is why it is limited to the docked state where power and bandwidth are free. |
-| **Push-to-talk on the tummy switch** *(chosen for undocked operation, and built first)* | Zero extra cost, and *pressing the Furby's tummy to talk to it* is arguably the most Furby-like interaction of the three. It is also a prerequisite for testing everything else. |
+Server-side detection costs the device nothing — it only streams 16 kHz PCM, no PSRAM and no
+on-device model — but it requires a continuous stream, which is why it is confined to the docked
+state where power and bandwidth are free. On-device detection is excluded anyway: `micro_wake_word`
+and `esp-sr` need ESPHome and an ESP32-S3. **Push-to-talk is built first**, being a prerequisite
+for testing everything else, and pressing the Furby's tummy to talk to it is arguably the most
+Furby-like of the options.
 
 **Wake word phrase: "Hey Furby".** Custom models are the normal path, not an exception — Home
 Assistant publishes a training notebook, Piper generates the synthetic clips, and background
@@ -751,7 +657,7 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 - **Description:** a documented repository layout, a reproducible PlatformIO build, secrets kept
   out of version control, and a CI job that at minimum compiles the firmware on every push.
   `platformio.ini` must pin the `pioarduino` platform fork explicitly — see
-  [ARCH-D3](#55-arch-d3--framework-flavour-and-toolchain).
+  [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain).
 - **Acceptance:** a clean checkout builds; CI fails on a deliberately broken build; no
   credentials are present in the repository.
 - **Depends on:** ARCH-D1, ARCH-D3.
@@ -776,7 +682,11 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 - **Depends on:** F-01, HW-D4, HW-D5.
 - **Implementation note:** plain C++ with an interrupt-driven encoder counter; the legacy sketch's
   LEDC parameters and the direction-change guard in
-  [Appendix A2](#a2-motor-drive-parameters) are the starting point.
+  [Appendix A2](#a2-motor-drive-parameters) are the starting point — but they were tuned for
+  open-loop running, so two things have to be settled here. **Braking versus coasting** at the
+  target angle: A2 stops by coasting, which lets the camshaft overshoot, so the repeatability
+  criterion above is the test for whether braking is needed. And the **usable duty range**, since
+  A2's value was deliberately slow.
 - **Milestone:** M2.
 
 #### F-11 — Named poses and animation sequencer
@@ -891,9 +801,9 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
   changes take effect immediately; a diagnostic tone confirms the path without any network.
 - **Depends on:** F-01, HW-D1, HW-D3.
 - **Implementation note:** assistant answers arrive as **raw PCM chunks** over Wyoming
-  ([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)), so **no MP3 or WAV decoder is needed**
+  ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)), so **no MP3 or WAV decoder is needed**
   for them — the chunks go straight to the output. ESP8266Audio remains useful for RTTTL jingles
-  and diagnostic tones ([Appendix B4](#b4-microphone-and-speaker-drivers)).
+  and diagnostic tones ([Appendix B4](#b2-microphone-and-speaker-drivers)).
 - **Milestone:** M3.
 
 #### F-41 — Microphone chain
@@ -903,7 +813,7 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
   makes a cheap microphone usable: a high-pass to remove rumble, gain, and a look-ahead limiter
   to stop clipping when someone speaks close to the toy. A level readout in dBFS is required for
   diagnostics and for tuning gain. The T-Watch parameters in
-  [Appendix B](#b3-audio-dsp-parameters) are the starting values.
+  [Appendix B](#b1-audio-dsp-parameters) are the starting values.
 - **Acceptance:** speech at 1 m lands in a healthy level range without clipping; the motor
   running does not render speech unintelligible (or, if it does, this is documented and the
   motor is muted during listening); the level readout responds correctly to silence and to
@@ -927,12 +837,12 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
   returns to idle; the device recovers without a reboot.
 - **Depends on:** F-40, F-41, F-20, F-63 (dock state).
 - **Implementation note:** the device is a **Wyoming satellite**
-  ([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)): it listens on a TCP port, Home
+  ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)): it listens on a TCP port, Home
   Assistant connects to it, and it is discovered by zeroconf or added by host and port (see
   [§13.2](#132-open-questions)). It requests pipeline runs and handles the audio and pipeline
   events of the protocol. No access token is stored on the device. The T-Watch assist client is
   *not* the reference here; its capture and playback layers
-  ([B3](#b3-audio-dsp-parameters), [B4](#b4-microphone-and-speaker-drivers)) still are.
+  ([B1](#b1-audio-dsp-parameters), [B2](#b2-microphone-and-speaker-drivers)) still are.
 - **Milestone:** M3.
 
 #### F-43 — Mode-dependent voice
@@ -1051,7 +961,7 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
   and enforces quiet hours and volume. Priority decides what happens when something is already
   playing: queue, interrupt, or drop. An alarm-class phrase (fire, water, intruder) must
   interrupt and must ignore the quiet-hours suppression.
-  **Realised as `assist_satellite.announce`** ([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)):
+  **Realised as `assist_satellite.announce`** ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)):
   Home Assistant renders the text with the mode's voice ([F-43](#f-43--mode-dependent-voice)) and
   streams raw PCM; the device plays and animates it. Because `announce` is a **push**, the
   queueing, priority and quiet-hours policy have to be enforced **on the device** — nothing on the
@@ -1138,11 +1048,11 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 This contract is carried by **two separate transports**, and it matters which one carries what:
 
 - **Voice and announcements** go over the Wyoming satellite connection
-  ([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)). That gives an `assist_satellite`
+  ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)). That gives an `assist_satellite`
   entity and a wake-word select — and nothing below.
 - **Everything below** — every control in §10.1 and every event in §10.2 — is carried by
   `furby_link` over the transport still to be chosen in
-  [ARCH-D4](#56-arch-d4--control-and-event-transport).
+  [ARCH-D4](#54-arch-d4--control-and-event-transport).
 
 ### 10.1 Exposed controls
 
@@ -1229,7 +1139,7 @@ deliberately emptied before sharing and stays that way.
 
 | ID | Decision | Blocks | Status |
 | --- | --- | --- | --- |
-| [ARCH-D4](#56-arch-d4--control-and-event-transport) | Control and event transport | F-50, F-62, F-63, §10 | Open — MQTT with HA discovery recommended; resolve before M4 |
+| [ARCH-D4](#54-arch-d4--control-and-event-transport) | Control and event transport | F-50, F-62, F-63, §10 | Open — MQTT with HA discovery recommended; resolve before M4 |
 | [HW-D2](#hw-d2--microphone) | Original electret vs. MEMS microphone | F-41 | Open — measurement pending; estimate favours MEMS given HW-D7 |
 | [HW-D3](#hw-d3--speaker-and-amplifier) | Speaker and amplifier path | F-40 | Open — measurement pending; estimate favours original transducer + I²S amp |
 | [HW-D4](#hw-d4--motor-driver) | Motor driver | F-10 | Open, but reduced to identifying the driver already installed — the legacy sketch drove the motor cleanly through it |
@@ -1256,7 +1166,7 @@ deliberately emptied before sharing and stays that way.
    transmit them at a real Furby and watch, or mine the original source listing
    ([A8](#a8-sources)) once it is reachable.
 7. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
-   ([ARCH-D2](#54-arch-d2--home-assistant-voice-transport)) — does the device announce itself over
+   ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)) — does the device announce itself over
    zeroconf, or is it added manually by host and port? The manual route is simpler to build and
    needs a fixed address; zeroconf is friendlier and survives a DHCP change.
 8. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
@@ -1271,16 +1181,13 @@ deliberately emptied before sharing and stays that way.
 | Speech source | All speech is live Home Assistant TTS; no pre-rendered on-device samples | 2026-09-04 |
 | Behaviour depth | Reactions, animations and modes; **no** needs/mood simulation | 2026-09-04 |
 | Motion sensing | Original gearbox retained, using **both** the optical encoder and the sync switch | 2026-09-04 |
-| Framework stance | ESPHome preferred but not mandatory; reusing original parts ranks higher | 2026-09-04 |
-| ↳ [ARCH-D1](#53-arch-d1-resolution) | Applied that stance and resolved it: **custom firmware**, ESPHome dropped. Space budget and audio stack decided it; the HW-D3 gate was removed because path B is agnostic to the audio path | 2026-09-07 |
 | Documentation language | English, except the German phrase content | 2026-09-04 |
-| [ARCH-D2](#54-arch-d2--home-assistant-voice-transport) | **Wyoming satellite** as the voice transport, not the raw Assist WebSocket — it sits above the `assist_satellite` feature ceiling, needs no token on the device, and delivers TTS as raw PCM | 2026-09-07 |
-| [ARCH-D3](#55-arch-d3--framework-flavour-and-toolchain) | **PlatformIO + Arduino-ESP32 3.x via the `pioarduino` platform fork** | 2026-09-07 |
-| [HW-D1](#hw-d1--mcu-choice) | **ESP32 classic**, WROOM-class module — on hand, familiar, legacy pin map transfers, and the S3 buys nothing once wake word runs server-side | 2026-09-07 |
+| [ARCH-D1](#51-arch-d1--firmware-framework) | **Custom firmware**, no ESPHome — space budget for add-on modules and the audio stack decided it | 2026-09-07 |
+| [ARCH-D2](#52-arch-d2--home-assistant-voice-transport) | **Wyoming satellite** rather than the raw Assist WebSocket — above the `assist_satellite` feature ceiling, no token on the device, TTS as raw PCM | 2026-09-07 |
+| [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain) | **PlatformIO + Arduino-ESP32 3.x via the `pioarduino` platform fork** | 2026-09-07 |
+| [HW-D1](#hw-d1--mcu-choice) | **ESP32 classic**, WROOM-class module — on hand, familiar, legacy pin map transfers; the S3 buys nothing once wake word runs server-side | 2026-09-07 |
 | [HW-D5](#hw-d5--power) | **Li-ion + wireless charging, mostly docked.** The battery is a peak buffer for motor inrush, not an energy store | 2026-09-07 |
-| ↳ Battery operation | Yes — this answers the former open question 4 | 2026-09-07 |
-| [HW-D7](#hw-d7--wake-word-strategy) | **Two trigger modes by dock state:** docked → continuous stream with server-side wake word; undocked → push-to-talk on the tummy switch | 2026-09-07 |
-| ↳ Wake word phrase | **"Hey Furby"**, not "Ok Furby" — the shared "Ok" prefix collides with "Ok Nabu" in the same room. Agreed; the cross-trigger test remains as verification, not as a condition | 2026-09-07 |
+| [HW-D7](#hw-d7--wake-word-strategy) | **Two trigger modes by dock state:** docked → continuous stream with server-side wake word; undocked → push-to-talk. Phrase **"Hey Furby"** — "Ok Furby" would collide with "Ok Nabu" in the same room | 2026-09-07 |
 
 ---
 
@@ -1314,12 +1221,20 @@ PWM resolution    8 bit
 Running duty      150 / 255   (~59 %)
 ```
 
+The duty is a **conservative starting point, not a characterised nominal**: it was chosen to run
+the gearbox deliberately slowly under supervision, with no position feedback and a hand on the
+power. The usable range is unmeasured — a bench-prototype task ([§8.1](#81-the-bench-prototype-m0)).
+
 Direction change procedure, worth keeping — it prevents shoot-through and gearbox shock:
 
 1. Stop: both direction pins LOW, duty 0.
 2. Wait 10 ms.
 3. Set the new direction pin HIGH (the other stays LOW).
 4. Apply the running duty.
+
+Step 1 is **coast**, not brake. Correct for a direction change; probably wrong for stopping at a
+commanded angle, where a coasting camshaft overshoots. Braking (both direction pins HIGH) is the
+open design point in [F-10](#f-10--motor-control-with-homing).
 
 ### A3. The infrared protocol, decoded
 
@@ -1432,7 +1347,7 @@ noting so the bug is not reproduced.)
 | Legacy element | Why dropped |
 | --- | --- |
 | DFPlayer Mini + SD card samples | Replaced by live Home Assistant TTS |
-| MQTT client and topic scheme | Replaced by the native Home Assistant path |
+| MQTT topic scheme | The scheme is dropped; MQTT itself is the recommended transport in [ARCH-D4](#54-arch-d4--control-and-event-transport) |
 | Hand-rolled WiFi scan/connect logic | Provided by the framework |
 | Daily scheduled restart | A workaround for leaks; NFR-5 requires fixing the cause instead |
 | `setCpuFrequencyMhz(80)` | Audio work needs the headroom |
@@ -1446,51 +1361,21 @@ External material this document draws on, so the reasoning can be re-checked lat
 | [Furby 1998 source code](https://archive.org/details/furby-source) — the original SPC81A assembly listing by David Hampton and Wayne Schulz, scanned by Sean Riddle (also as [PDF](https://www.seanriddle.com/furbysource.pdf) and as [plain text](https://archive.org/stream/furby-source/furbysource_djvu.txt)) | The authoritative reference for original firmware behaviour. **Not yet consulted** — archive.org is unreachable from the development session's network, which is restricted to GitHub and a few other hosts. Worth mining later for cam positions, sensor timings and the meaning of IR messages #2 and #8. |
 | [`mrtee/furby-ir`](https://github.com/mrtee/furby-ir) — PIC assembly transmitter for the Furby IR protocol | The bit encoding, frame layout, nibble checksum and repeat behaviour that made [A3](#a3-the-infrared-protocol-decoded) possible. |
 | [`d03n3rfr1tz3/TTGO.T-Watch.2020`](https://github.com/d03n3rfr1tz3/TTGO.T-Watch.2020) | The voice assistant building blocks in [Appendix B](#appendix-b--reusable-from-the-t-watch-project). |
-| [ESPHome documentation](https://esphome.io) (`esphome/esphome-docs`) | The framework constraints in [§5.1](#51-the-core-tension-arch-d1) — notably that the internal microphone ADC and internal DAC are no longer supported. Historical: ESPHome was dropped in [ARCH-D1](#53-arch-d1-resolution). |
-| [`home-assistant/core`](https://github.com/home-assistant/core) — `components/assist_pipeline/websocket_api.py` and `components/wyoming/assist_satellite.py` (read 2026-09-07) | The evidence behind [ARCH-D2](#54-arch-d2--home-assistant-voice-transport): `assist_pipeline/run` is alive and undeprecated, and the Wyoming integration builds a full `assist_satellite` entity with `announce` implemented. |
-| [`pioarduino/platform-espressif32`](https://github.com/pioarduino/platform-espressif32) | The toolchain constraint in [ARCH-D3](#55-arch-d3--framework-flavour-and-toolchain): Arduino-ESP32 3.x on ESP-IDF 5.5 comes from this fork, not from the official PlatformIO platform. |
+| [ESPHome documentation](https://esphome.io) (`esphome/esphome-docs`) | The audio-stack constraints weighed in [ARCH-D1](#51-arch-d1--firmware-framework): no internal microphone ADC, no internal DAC. |
+| [`home-assistant/core`](https://github.com/home-assistant/core) — `components/assist_pipeline/websocket_api.py` and `components/wyoming/assist_satellite.py` | The evidence behind [ARCH-D2](#52-arch-d2--home-assistant-voice-transport): `assist_pipeline/run` is alive and undeprecated, and the Wyoming integration builds a full `assist_satellite` entity with `announce` implemented. |
+| [`pioarduino/platform-espressif32`](https://github.com/pioarduino/platform-espressif32) | The toolchain constraint in [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain): Arduino-ESP32 3.x on ESP-IDF 5.5 comes from this fork, not from the official PlatformIO platform. |
 | [Wake words for Assist](https://www.home-assistant.io/voice_control/create_wake_word/) | The custom wake word training path in [HW-D7](#hw-d7--wake-word-strategy) — Piper-generated synthetic clips, trained in a published notebook. |
 
 ---
 
 ## Appendix B — Reusable from the T-Watch project
 
-Source: `d03n3rfr1tz3/TTGO.T-Watch.2020`. [ARCH-D1](#53-arch-d1-resolution) landed on custom
-firmware, so this appendix applies.
+Source: `d03n3rfr1tz3/TTGO.T-Watch.2020` — the microphone, DSP and audio layers transfer directly.
+Its assist client does not: that project talks to the raw Assist WebSocket, which
+[ARCH-D2](#52-arch-d2--home-assistant-voice-transport) replaced with the Wyoming satellite. The
+sample format is the same either way — signed 16-bit little-endian mono at 16 kHz.
 
-| Section | Status |
-| --- | --- |
-| [B1](#b1-home-assistant-assist-client), [B2](#b2-audio-framing) | **Superseded** by [ARCH-D2](#54-arch-d2--home-assistant-voice-transport) — the Wyoming satellite replaces the WebSocket assist client and its framing. Kept as the reference should the raw pipeline path ever be needed again. |
-| [B3](#b3-audio-dsp-parameters), [B4](#b4-microphone-and-speaker-drivers) | **Fully applicable** — transport-agnostic, and the larger part of the work. |
-
-### B1. Home Assistant assist client
-
-> **Superseded by [ARCH-D2](#54-arch-d2--home-assistant-voice-transport).** Retained as reference.
-
-`src/app/assist/assist_ws.{h,cpp}` — a WebSocket client against Home Assistant's
-`/api/websocket`:
-
-- Authentication with a long-lived access token, including requesting a token during pairing.
-- Fetching and selecting the Assist pipeline (the preferred one, or a named one).
-- Starting a run and driving a state machine: `STARTING` → `LISTENING` → `THINKING` → `DONE`
-  / `FAILED`, with per-run message IDs so late events from an abandoned run are discarded.
-- Receiving the transcript, the answer text, and the TTS audio URL.
-- Timeouts on both sides: a run timeout slightly above the one Home Assistant applies to itself.
-
-`src/app/assist/assist_tts.{h,cpp}` — fetches the TTS audio over HTTP into RAM and plays it,
-with a size cap beyond which the answer stays text-only.
-
-### B2. Audio framing
-
-> **Superseded by [ARCH-D2](#54-arch-d2--home-assistant-voice-transport)** — Wyoming carries its
-> own framing. Retained as reference.
-
-Audio is sent as binary WebSocket frames: a **handler byte** followed by **signed 16-bit
-little-endian mono PCM**, 1024 bytes per frame. A lone handler byte signals end-of-audio.
-The sample format itself — signed 16-bit little-endian mono at 16 kHz — is unchanged under
-Wyoming; only the envelope differs.
-
-### B3. Audio DSP parameters
+### B1. Audio DSP parameters
 
 `src/app/assist/assist_stream.{h,cpp}` — good starting values for [F-41](#f-41--microphone-chain):
 
@@ -1505,14 +1390,14 @@ Wyoming; only the envelope differs.
 | Gain options | off, +18, +30, +36, +42 dB | Default +36 dB — speech at a few cm lands near −20 dBFS |
 | Hard cap | 15 s | The reader stops itself |
 
-### B4. Microphone and speaker drivers
+### B2. Microphone and speaker drivers
 
 - `src/hardware/micctl.{h,cpp}` — PDM MEMS microphone (SPM1423HM4H-B) via ESP32 I²S **PDM RX**
   (available on I2S0 only), 16 kHz / 16-bit, two pins (clock + data), with a deferred-stop
   mechanism so brief UI transitions do not tear the microphone down.
 - `src/hardware/sound.{h,cpp}` — ESP8266Audio (earlephilhower): `AudioOutputI2S` plus generators
   for MP3, WAV and RTTTL, and sources for SPIFFS, PROGMEM and RAM. Under
-  [ARCH-D2](#54-arch-d2--home-assistant-voice-transport) the MP3 and WAV generators are no longer
+  [ARCH-D2](#52-arch-d2--home-assistant-voice-transport) the MP3 and WAV generators are no longer
   needed for assistant answers — those arrive as raw PCM — but **RTTTL** remains a cheap way to
   give the Furby jingles and diagnostic tones without any audio files.
 
