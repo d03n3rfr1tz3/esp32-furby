@@ -74,6 +74,10 @@ reader.
 ### Git and commits
 
 - Develop on the branch assigned for the session; create it if it does not exist.
+- **Commit and push without asking.** Finished work belongs in the branch, not in the working
+  tree — do not end a session with uncommitted changes and do not ask for permission first. This
+  standing permission covers committing and pushing to the session branch; it does not extend to
+  the two prohibitions below.
 - **Commit messages are English**, written in the imperative, with a body explaining the *why*
   when the change is not self-evident.
 - **Never open a pull request unless explicitly asked.**
