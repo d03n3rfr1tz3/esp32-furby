@@ -654,17 +654,24 @@ is no longer simply `planned`.
 
 #### F-02 — Repository layout, build and validation
 
-- **Goal:** anyone can build and check the firmware with one command.
+- **Goal:** anyone can build, test and check the firmware with one command.
 - **Description:** a documented repository layout, a reproducible PlatformIO build, secrets kept
-  out of version control, and a CI job that at minimum compiles the firmware on every push.
-  `platformio.ini` must pin the `pioarduino` platform fork explicitly — see
-  [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain).
-- **Acceptance:** a clean checkout builds; CI fails on a deliberately broken build; no
-  credentials are present in the repository.
+  out of version control, a **host-run unit-test suite**, and a CI job that compiles the
+  firmware and runs the suite on every push. `platformio.ini` must pin the `pioarduino`
+  platform fork explicitly — see [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain).
+  The suite runs on the development machine, not the device, which puts a design constraint on
+  every module that follows: hardware-independent logic lives in its own `lib/` module and does
+  not include `Arduino.h`, so a test can link it directly. `firmware/test/README.md` holds the
+  convention.
+- **Acceptance:** a clean checkout builds; the test suite runs without an ESP32 attached; CI
+  fails both on a deliberately broken build and on a failing test; no credentials are present
+  in the repository.
 - **Depends on:** ARCH-D1, ARCH-D3.
-- **Status:** the layout, the pinned build and the CI job exist and a clean checkout compiles.
-  What the firmware compiles is a skeleton that drives no hardware — that is
-  [F-01](#f-01--base-node)'s job, and it waits on M0.
+- **Status:** the layout, the pinned build, the host test suite and the CI job exist, and a
+  clean checkout compiles and tests green. What the firmware compiles is a skeleton that drives
+  no hardware — that is [F-01](#f-01--base-node)'s job, and it waits on M0. The suite is
+  likewise a harness with one smoke test: there is no behaviour to test until the first module
+  from [§6.3](#63-module-boundaries) exists.
 - **Milestone:** M1.
 
 ### Motion
@@ -1108,6 +1115,7 @@ Names are stable. Payloads carry at least the triggering source and a timestamp.
 | NFR-6 | **Latency.** Push-to-talk to "listening" feedback is perceptually immediate; the end-to-end voice interaction is not noticeably slower than a comparable Home Assistant voice satellite. |
 | NFR-7 | **Editability.** Phrases, the pose table and the reaction table can all be changed without recompiling firmware. |
 | NFR-8 | **No secrets in the repository.** Credentials and tokens come from an ignored local file. |
+| NFR-9 | **Testability.** Logic that does not touch hardware is a `lib/` module free of `Arduino.h`, covered by unit tests that run on the host. CI runs them on every push ([F-02](#f-02--repository-layout-build-and-validation)). |
 
 ---
 
@@ -1122,10 +1130,11 @@ esp32-furby/
 │   ├── hardware.md             ← pin map, wiring, measurements (from M0)
 │   └── decisions/              ← one file per resolved decision, if they grow
 ├── firmware/                   ← PlatformIO project (ARCH-D3)
-│   ├── platformio.ini          ← pins the pioarduino platform fork
+│   ├── platformio.ini          ← pins the pioarduino platform fork; env `furby` + env `native`
 │   ├── include/
-│   ├── src/                    ← one directory per module from §6.3
-│   ├── lib/
+│   ├── src/                    ← the layer that touches hardware
+│   ├── lib/                    ← one library per module from §6.3, free of Arduino.h
+│   ├── test/                   ← host-run unit tests (env `native`)
 │   └── config.example.h        ← template; the real config.h is git-ignored
 └── homeassistant/
     ├── packages/               ← phrase catalogue, event automations

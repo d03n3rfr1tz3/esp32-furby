@@ -24,9 +24,14 @@ which is what provides the Arduino-ESP32 3.x core.
 cp firmware/config.example.h firmware/config.h   # then fill it in
 pio run --project-dir firmware                   # build
 pio run --project-dir firmware --target upload   # flash over USB
+pio test --project-dir firmware -e native        # run the unit tests on the host
 ```
 
 `firmware/config.h` holds every credential and is git-ignored. It never gets committed.
+
+The unit tests need no ESP32 attached; CI runs them on every push alongside the build.
+[firmware/test/README.md](firmware/test/README.md) explains the layout and the design
+convention that keeps logic testable off the device.
 
 ## Documentation
 
