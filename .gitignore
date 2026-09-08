@@ -53,3 +53,15 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Local configuration — credentials live here and never in the repository (NFR-8)
+firmware/config.h
+
+# Editors
+.vscode/
+.idea/

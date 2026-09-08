@@ -2,7 +2,7 @@
 
 **Project:** `esp32-furby` — a 1998 Furby refurbished with an ESP32 brain
 **Status:** Draft 2 — framework and transport decided, hardware decisions partly open
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-08
 
 ---
 
@@ -634,7 +634,8 @@ skeleton. Everything else in M1 waits until M0's numbers are in, because
 ## 9. Feature Catalogue
 
 Each feature: **Goal** — one sentence. **Description** — what it does. **Acceptance** — how we
-know it works. **Depends on** — prerequisites. Status is `planned` for all features in Draft 1.
+know it works. **Depends on** — prerequisites. A **Status** line appears only where a feature
+is no longer simply `planned`.
 
 ### Foundation
 
@@ -661,6 +662,9 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 - **Acceptance:** a clean checkout builds; CI fails on a deliberately broken build; no
   credentials are present in the repository.
 - **Depends on:** ARCH-D1, ARCH-D3.
+- **Status:** the layout, the pinned build and the CI job exist and a clean checkout compiles.
+  What the firmware compiles is a skeleton that drives no hardware — that is
+  [F-01](#f-01--base-node)'s job, and it waits on M0.
 - **Milestone:** M1.
 
 ### Motion
@@ -1112,6 +1116,7 @@ Names are stable. Payloads carry at least the triggering source and a timestamp.
 ```
 esp32-furby/
 ├── README.md
+├── .github/workflows/          ← CI; builds the firmware on every push
 ├── docs/
 │   ├── FSD.md                  ← this document
 │   ├── hardware.md             ← pin map, wiring, measurements (from M0)
@@ -1126,6 +1131,8 @@ esp32-furby/
     ├── packages/               ← phrase catalogue, event automations
     └── blueprints/
 ```
+
+Directories appear when they get content; `homeassistant/` arrives with M5.
 
 Credentials live only in the ignored `firmware/config.h`
 ([NFR-8](#11-non-functional-requirements)). The legacy `config.h` in the project history was

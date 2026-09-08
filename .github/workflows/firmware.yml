@@ -1,0 +1,41 @@
+name: firmware
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse a committed config.h
+        run: |
+          if git ls-files --error-unmatch firmware/config.h > /dev/null 2>&1; then
+            echo "firmware/config.h is tracked — credentials must stay out of the repository (NFR-8)."
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/platformio.ini') }}
+          restore-keys: pio-${{ runner.os }}-
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Provide a configuration
+        run: cp firmware/config.example.h firmware/config.h
+
+      - name: Build
+        run: pio run --project-dir firmware
