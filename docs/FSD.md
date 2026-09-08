@@ -349,7 +349,7 @@ Assistant and must not be conflated.
 | Electret microphone | Original | Preamp was on the removed mainboard |
 | Speaker | Original | Impedance and rating to be measured |
 | IR LED + IR receiver | Original | Forehead |
-| Eye LEDs | Added, already prepared | Must be able to go red for evil mode |
+| Eye LEDs | Added, already prepared | Red, not addressable; one GPIO, on/off ([HW-D8](#hw-d8--eye-leds)) |
 | ESP32 module | Added | See [HW-D1](#hw-d1--mcu-choice) |
 | Motor driver | Added | See [HW-D4](#hw-d4--motor-driver) |
 | Power supply | Added | See [HW-D5](#hw-d5--power) |
@@ -514,7 +514,7 @@ Rough pin count for the full feature set:
 | Light sensor (ADC) | 1 |
 | Switches (tummy, back, tongue, tilt) | 4 |
 | IR receive / transmit | 2 |
-| Eye LEDs | 1–2 |
+| Eye LEDs | 1 (2 if [HW-D9](#hw-d9--a-second-eye-colour-channel) adds a channel) |
 | Microphone | 1 (analogue) / 2 (PDM) / 3 (I²S) |
 | Speaker | 1 (internal DAC) / 3 (I²S) |
 | Dock / charge state ([HW-D5](#hw-d5--power)) | 1–2 |
@@ -574,16 +574,39 @@ towards a MEMS part.
 
 #### HW-D8 — Eye LEDs
 
-| Option | Pros | Cons |
-| --- | --- | --- |
-| **WS2812 / addressable** | 1 pin for both eyes, full colour, effects for the assistant states. | Timing-sensitive; needs RMT. |
-| **PWM red + white per eye** | Dead simple, no timing constraints. | 2–4 pins, limited palette. |
+**Red LEDs on a single GPIO, switched on or off.** Not addressable. Whether the pin drives them
+directly or through a MOSFET is unrecorded and does not matter to the firmware — either way the
+pin goes high or low.
 
-**Note:** the eye LEDs are already prepared in the build. This decision is really "what is
-already wired in?" — confirm before designing [F-22](#f-22--eye-lighting).
+The consequence runs deeper than one line of driver code: **the eyes carry one bit, not a
+colour.** Everything the eyes express has to be expressed in *time* — steady, pulsing, blinking
+fast — which is what [F-22](#f-22--eye-lighting) and [F-44](#f-44--assistant-state-feedback) are
+written against. That the LEDs happen to be red keeps the Furby's most recognisable visual note
+available; it just cannot be switched off in favour of another colour.
 
-**Recommendation:** WS2812 if the existing wiring allows, because the assistant states
-(listening / thinking / speaking / error) benefit greatly from colour.
+Brightness is a possibility, not a promise: PWM on the same pin should dim them, and the bench
+prototype confirms it dims smoothly and without visible flicker before
+[F-22](#f-22--eye-lighting) relies on it.
+
+#### HW-D9 — A second eye colour channel
+
+**Open.** [HW-D8](#hw-d8--eye-leds) leaves the eyes with a single red channel, which is enough
+for state and mode *patterns* but cannot distinguish modes by colour. A second channel — one
+more GPIO driving a differently coloured LED, or replacing both eyes with WS2812 — would restore
+that, at the cost of soldering inside a finished head.
+
+Two things gate it, and neither is a matter of opinion:
+
+- **A free GPIO**, which [HW-D6](#hw-d6--gpio-budget) does not yet have a final count for.
+- **Physical space in the head**, which already holds the IR pair, the light sensor and whatever
+  [HW-D2](#hw-d2--microphone) lands on.
+
+Both are answered by inspection rather than by argument, and `docs/hardware.md` is where the
+answers go.
+
+**Resolve before [M4](#8-milestones)** — [F-50](#f-50--mode-manager) is the first feature that
+would use a colour distinction, and it is an M4 feature. [F-22](#f-22--eye-lighting) is built
+single-channel in M2 regardless; a second channel extends it rather than changing it.
 
 ---
 
@@ -591,7 +614,7 @@ already wired in?" — confirm before designing [F-22](#f-22--eye-lighting).
 
 | ID | Milestone | Contents | Exit criterion |
 | --- | --- | --- | --- |
-| **M0** | Decisions & measurements | ARCH-D1/D2/D3 ✅, HW-D1/D5/D7 ✅; remaining: ARCH-D4, HW-D2, HW-D3, HW-D4, HW-D6, HW-D8. Includes the **bench prototype** in [§8.1](#81-the-bench-prototype-m0) | All decisions resolved and recorded in §13, each measurement-gated one backed by a number from the bench |
+| **M0** | Decisions & measurements | ARCH-D1/D2/D3 ✅, HW-D1/D5/D7/D8 ✅; remaining: ARCH-D4, HW-D2, HW-D3, HW-D4, HW-D6, HW-D9. Includes the **bench prototype** in [§8.1](#81-the-bench-prototype-m0) | All decisions resolved and recorded in §13, each measurement-gated one backed by a number from the bench |
 | **M1** | Foundation | F-01, F-02 | Device boots, is reachable, can be updated over the air |
 | **M2** | Motion | F-10, F-11, F-20, F-21, F-22 | The Furby homes, holds named poses, and reacts physically to touch |
 | **M3** | Audio & voice | F-40, F-41, F-42, F-45 | The Furby is a Wyoming satellite in Home Assistant and a full voice interaction works end to end, push-to-talk and docked wake word |
@@ -759,16 +782,22 @@ is no longer simply `planned`.
 
 #### F-22 — Eye lighting
 
-- **Goal:** the eyes light up, and can go red.
-- **Description:** the eye LEDs are exposed as a controllable light with colour and brightness.
-  Beyond manual control, the eyes convey state: assistant states (idle / listening / thinking /
-  speaking / error) and mode (notably **red in evil mode**, per
-  [F-50](#f-50--mode-manager)). Brightness must follow the quiet-hours schedule so the Furby
-  does not glow at full power at night.
-- **Acceptance:** eyes can be set to any colour from Home Assistant; evil mode turns them red
-  and normal mode restores them; the assistant states are visually distinguishable across the
-  room.
+- **Goal:** the eyes light up, and say something by *how* they light up.
+- **Description:** the eyes are one red channel on one GPIO ([HW-D8](#hw-d8--eye-leds)), exposed
+  as a switchable light. Because there is no colour to vary, the expressive vocabulary is
+  temporal: **off, steady, slow pulse, fast blink**, and a named pattern is what the rest of the
+  firmware asks for — never a colour. The assistant states of
+  [F-44](#f-44--assistant-state-feedback) and the modes of [F-50](#f-50--mode-manager) each map
+  onto one pattern, and the mapping is a table, not code.
+  Quiet hours must reach the eyes: if PWM dimming proves usable
+  ([HW-D8](#hw-d8--eye-leds)) the night level is a dim one, otherwise it is off.
+- **Acceptance:** each named pattern is distinguishable from the others across a room; a pattern
+  keeps running unattended without drift or flicker; the eyes can be switched from Home
+  Assistant; the quiet-hours level takes effect at the configured time.
 - **Depends on:** F-01, HW-D8.
+- **Implementation note:** [HW-D9](#hw-d9--a-second-eye-colour-channel) may later add a second
+  colour channel. Keep the pattern table the interface, so that a second channel becomes a new
+  column rather than a rewrite.
 - **Milestone:** M2.
 
 ### Infrared
@@ -872,7 +901,8 @@ is no longer simply `planned`.
 
 - **Goal:** you can see what the Furby is doing without listening.
 - **Description:** the assistant's states drive the eyes and the body: *listening* (e.g. ears up,
-  eyes wide, a distinct eye colour), *thinking*, *speaking* (mouth animation via
+  eyes wide, a distinct eye pattern per [F-22](#f-22--eye-lighting)), *thinking*, *speaking*
+  (mouth animation via
   [F-12](#f-12--talk-animation)), *error* (a visible, unmistakable signal). Feedback must
   degrade gracefully during quiet hours — visual only, no motor.
 - **Acceptance:** an observer can tell listening from thinking from speaking across a room; an
@@ -906,12 +936,14 @@ is no longer simply `planned`.
 - **Goal:** the Furby has three personalities, and remembers which one it is in.
 - **Description:** a mode of `normal`, `cute` or `evil`, settable from Home Assistant and from
   physical interaction, persisted across reboots. Changing mode has an immediate visible and
-  audible effect: **evil mode turns the eyes red**, and the mode change is announced with the
-  corresponding phrase from the catalogue (`002-Cute-Mode` / `002-Evil-Mode`). Mode influences
-  the TTS voice ([F-43](#f-43--mode-dependent-voice)), the eye colour, the reaction table and
-  the phrase variant chosen for an event.
-- **Acceptance:** setting evil mode turns the eyes red, announces it, and the next phrase uses
-  the evil voice; the mode survives a power cycle; every mode has a defined eye colour.
+  audible effect: **evil mode lights the eyes and keeps them lit**, where the other modes leave
+  them to the assistant states, and the mode change is announced with the corresponding phrase
+  from the catalogue (`002-Cute-Mode` / `002-Evil-Mode`). Mode influences the TTS voice
+  ([F-43](#f-43--mode-dependent-voice)), the eye pattern, the reaction table and the phrase
+  variant chosen for an event.
+- **Acceptance:** setting evil mode lights the eyes, announces it, and the next phrase uses the
+  evil voice; leaving evil mode returns the eyes to the normal behaviour; the mode survives a
+  power cycle; every mode has a defined eye pattern.
 - **Depends on:** F-22, F-42, ARCH-D4.
 - **Milestone:** M4.
 
@@ -1071,7 +1103,7 @@ This contract is carried by **two separate transports**, and it matters which on
 | --- | --- | --- |
 | Mode | select (`normal` / `cute` / `evil`) | Read and set the personality |
 | Volume | number (%) | Current speaking volume |
-| Eyes | light | Colour and brightness |
+| Eyes | light (on/off, brightness if PWM proves usable) | Manual override of the eye pattern ([F-22](#f-22--eye-lighting)); no colour, see [HW-D8](#hw-d8--eye-leds) |
 | Quiet hours enabled | switch | Master switch for the schedule |
 | Play animation | action (name) | Trigger a named animation |
 | Speak | `assist_satellite.announce` | The [F-61](#f-61--speak-interface) entry point — the one control that *does* come from the Wyoming side |
@@ -1160,7 +1192,7 @@ deliberately emptied before sharing and stays that way.
 | [HW-D3](#hw-d3--speaker-and-amplifier) | Speaker and amplifier path | F-40 | Open — measurement pending; estimate favours original transducer + I²S amp |
 | [HW-D4](#hw-d4--motor-driver) | Motor driver | F-10 | Open, but reduced to identifying the driver already installed — the legacy sketch drove the motor cleanly through it |
 | [HW-D6](#hw-d6--gpio-budget) | GPIO budget / port expander | All | Open — depends on enclosure |
-| [HW-D8](#hw-d8--eye-leds) | Eye LED type | F-22 | Open — confirm what is already wired |
+| [HW-D9](#hw-d9--a-second-eye-colour-channel) | A second eye colour channel | F-50 (colour as a mode signal) | Open — gated on a free GPIO (HW-D6) and on space in the head; resolve before M4 |
 
 ### 13.2 Open questions
 
@@ -1171,21 +1203,20 @@ deliberately emptied before sharing and stays that way.
 2. **Cam position table.** The named poses in [F-11](#f-11--named-poses-and-animation-sequencer)
    must be calibrated against the actual gearbox. Is a reference table from the original
    available, or do we measure all of them empirically during M2?
-3. **Eye LED wiring.** What is already installed — addressable or discrete? ([HW-D8](#hw-d8--eye-leds))
-4. **Motor driver part.** Which driver module is physically in the build? The legacy sketch drove
+3. **Motor driver part.** Which driver module is physically in the build? The legacy sketch drove
    the motor cleanly on three logic pins, so one is there ([HW-D4](#hw-d4--motor-driver)); the
-   part number was never written down. Same shape as question 3 — read it off the board.
-5. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
+   part number was never written down. Read it off the board.
+4. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
    [F-31](#f-31--infrared-transmit), or do we test against recorded codes only?
-6. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
+5. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
    ([A3](#a3-the-infrared-protocol-decoded)), but not what they say. Two ways to find out:
    transmit them at a real Furby and watch, or mine the original source listing
    ([A8](#a8-sources)) once it is reachable.
-7. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
+6. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
    ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)) — does the device announce itself over
    zeroconf, or is it added manually by host and port? The manual route is simpler to build and
    needs a fixed address; zeroconf is friendlier and survives a DHCP change.
-8. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
+7. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
    The verification task is in [HW-D7](#hw-d7--wake-word-strategy): say "Ok Nabu" twenty times
    with both models enabled and count. The phrase itself is agreed; this checks it in practice
    and is cheap to redo if it fails.
@@ -1203,6 +1234,7 @@ deliberately emptied before sharing and stays that way.
 | [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain) | **PlatformIO + Arduino-ESP32 3.x via the `pioarduino` platform fork** | 2026-09-07 |
 | [HW-D1](#hw-d1--mcu-choice) | **ESP32 classic**, WROOM-class module — on hand, familiar, legacy pin map transfers; the S3 buys nothing once wake word runs server-side | 2026-09-07 |
 | [HW-D5](#hw-d5--power) | **Li-ion + wireless charging, mostly docked.** The battery is a peak buffer for motor inrush, not an energy store | 2026-09-07 |
+| [HW-D8](#hw-d8--eye-leds) | **Red LEDs, one GPIO, on/off** — not addressable. The eyes carry a pattern, never a colour; F-22, F-44 and F-50 are written against that | 2026-09-08 |
 | [HW-D7](#hw-d7--wake-word-strategy) | **Two trigger modes by dock state:** docked → continuous stream with server-side wake word; undocked → push-to-talk. Phrase **"Hey Furby"** — "Ok Furby" would collide with "Ok Nabu" in the same room | 2026-09-07 |
 
 ---

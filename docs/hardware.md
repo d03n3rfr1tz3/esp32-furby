@@ -19,7 +19,7 @@ board reads `—`. Estimates live in the FSD, against the decision they inform.
 | Microphone | — | HW-D2 |
 | Speaker | — | Original transducer; record diameter and measured DC resistance |
 | Amplifier | — | HW-D3 |
-| Eye LEDs | — | HW-D8: addressable (WS2812) or discrete? Read from the existing wiring |
+| Eye LEDs | Red, not addressable; one GPIO, on/off | Whether the pin drives them directly or through a MOSFET is unrecorded and does not affect the firmware. Record it anyway if the board is open |
 | Qi receiver | — | HW-D5: 5 W (BPP) or 15 W (EPP)? |
 | Battery | — | Chemistry, capacity, and the charger's termination behaviour |
 
@@ -48,7 +48,7 @@ Not in the legacy map and still to be assigned:
 | Back switch | — | |
 | Tongue switch | — | |
 | Tilt switch | — | |
-| Eye LEDs | — | 1 pin if addressable, 2–4 if discrete (HW-D8) |
+| Eye LEDs | — | One pin, on/off (HW-D8) |
 | Microphone | — | 1 / 2 / 3 pins depending on HW-D2 |
 | Speaker / amplifier | — | 1 / 3 pins depending on HW-D3 |
 | Dock / charge state | — | Required, not optional (HW-D5) |
@@ -100,6 +100,17 @@ M2. One row per pose, filled in empirically.
 | `home` | — | New-in-box position: eyes and mouth open, ears up |
 | `sleep` | — | |
 
-## 5. Wiring notes
+## 5. Head space and free GPIOs
+
+[HW-D9](FSD.md#hw-d9--a-second-eye-colour-channel) — a second eye colour channel — is gated on
+these two, and both are answered by looking rather than by measuring.
+
+| Question | Answer |
+| --- | --- |
+| GPIOs still unassigned after the full pin map | — |
+| Space left in the head, alongside the IR pair, the light sensor and the microphone | — |
+| Is a second LED reachable without disassembling the head further? | — |
+
+## 6. Wiring notes
 
 —
