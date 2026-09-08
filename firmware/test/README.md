@@ -29,6 +29,13 @@ Where a module must talk to hardware, the test seam is an injected interface —
 takes something it can call, and the test passes a fake. That is a design constraint on the
 module, which is why it is written down before the first module exists.
 
+## Reading a red run
+
+A failing assertion shows up as `[FAILED]` with the file, line and message, and the suite is
+then reported `ERRORED` rather than `FAILED`, usually alongside a `SIGHUP` line. That is how
+PlatformIO's native runner reports a test binary that exits non-zero; it is not a crash. The
+`[FAILED]` line above it is the real finding.
+
 ## On-device tests
 
 Some things only prove themselves on the real Furby: encoder counts, homing repeatability,
