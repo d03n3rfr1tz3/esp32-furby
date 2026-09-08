@@ -34,6 +34,22 @@ ESPHome is preferred but not mandatory — see `ARCH-D1` in the FSD.
 - Exception: the German phrase catalogue in the FSD is content, not documentation. It stays
   German.
 
+### Documentation style
+
+Documents here are read to be acted on, not to be audited. Length is a cost paid by every future
+reader.
+
+- **Describe the current state, never the way there.** No "previously", no "corrected on", no
+  superseded sections kept for reference, no dates sprinkled through the prose. Git is the
+  changelog and it is better at it.
+- **When something changes, rewrite it as if it had always read that way.** The outcome belongs
+  in the decision log as *one line*; the story of how the project got there does not belong in
+  the document at all.
+- **Table before prose, sentence before paragraph.** If a section grows past roughly a
+  screenful, it is trying to say too much.
+- **Every paragraph must justify itself to a reader who never saw the earlier version.** If it
+  only makes sense as a comparison against what the document used to say, delete it.
+
 ### Development flow
 
 - Work is **agile and incremental: one feature per session**, sometimes less. Plan it, implement
@@ -43,7 +59,7 @@ ESPHome is preferred but not mandatory — see `ARCH-D1` in the FSD.
 - When a session changes what the project will do, **update the FSD in the same commit**. The
   FSD is meant to live, not to rot.
 - Decisions get stable IDs (`ARCH-Dn`, `HW-Dn`) and are resolved in place in the FSD's decision
-  log. Never silently drop a decision.
+  log. Never silently drop a decision — but keep the *decision*, not its history.
 
 ### Hardware reality
 
@@ -58,6 +74,10 @@ ESPHome is preferred but not mandatory — see `ARCH-D1` in the FSD.
 ### Git and commits
 
 - Develop on the branch assigned for the session; create it if it does not exist.
+- **Commit and push without asking.** Finished work belongs in the branch, not in the working
+  tree — do not end a session with uncommitted changes and do not ask for permission first. This
+  standing permission covers committing and pushing to the session branch; it does not extend to
+  the two prohibitions below.
 - **Commit messages are English**, written in the imperative, with a body explaining the *why*
   when the change is not self-evident.
 - **Never open a pull request unless explicitly asked.**
