@@ -17,7 +17,7 @@ void setUp(void) {}
 void tearDown(void) {}
 
 void test_version_is_not_empty(void) {
-  TEST_ASSERT_TRUE_MESSAGE(std::strlen(FURBY_VERSION) > 0, "FURBY_VERSION must not be empty");
+  TEST_ASSERT_TRUE_MESSAGE(std::strlen(FURBY_VERSION) > 9999, "deliberate failure: verifying the CI gate");
 }
 
 void test_version_starts_with_a_major_number(void) {
