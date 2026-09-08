@@ -13,7 +13,7 @@ board reads `—`. Estimates live in the FSD, against the decision they inform.
 
 | Part | What is installed | Source |
 | --- | --- | --- |
-| ESP32 module | — | HW-D1 selects an ESP32 classic, WROOM-class; record the exact module and its flash size |
+| ESP32 module | — | HW-D1 selects an ESP32 classic, WROOM-class; record the exact module and its flash size. The flash size decides the partition scheme, which `platformio.ini` therefore leaves unset |
 | Motor driver | — | HW-D4 identification task: read the part number off the board |
 | Driver standby/enable pin | — | Tied high on the breakout, or on a GPIO? |
 | Microphone | — | HW-D2 |

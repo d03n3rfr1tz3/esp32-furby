@@ -33,12 +33,6 @@
 #define FURBY_NTP_SERVER "pool.ntp.org"
 #define FURBY_TIMEZONE "CET-1CEST,M3.5.0,M10.5.0/3"
 
-// --- Home Assistant voice -----------------------------------------------------------------
-// Wyoming satellite (ARCH-D2). Home Assistant connects to the device, so there is no host
-// address and no access token here — only the port we listen on.
-
-#define FURBY_WYOMING_PORT 10700
-
-// --- Home Assistant control and events ----------------------------------------------------
-// ARCH-D4 is still open, so the transport that carries the controls and events of FSD §10
-// has no settings yet. They are added here once that decision is resolved.
+// Nothing beyond this point yet. Voice (ARCH-D2) gains its settings with F-42, and the
+// control and event transport has none until ARCH-D4 is resolved. A setting is added here
+// when the feature that reads it is built, not before.
