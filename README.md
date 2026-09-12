@@ -37,7 +37,8 @@ convention that keeps logic testable off the device.
 
 - **[docs/hardware.md](docs/hardware.md)** — the pin map, the installed parts and the
   measurements taken on the real device. Anything the FSD marks "to be measured" is answered
-  here.
+  here. The circuit it derives from is [docs/SmartFurby.fzz](docs/SmartFurby.fzz), a Fritzing
+  design.
 - **[docs/FSD.md](docs/FSD.md)** — the Functional Specification Document. It holds every planned
   feature, the open hardware and architecture decisions, the phrase catalogue, and the knowledge
   salvaged from the earlier Arduino sketch. Development proceeds one feature at a time from this
