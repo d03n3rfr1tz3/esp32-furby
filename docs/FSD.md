@@ -2,7 +2,7 @@
 
 **Project:** `esp32-furby` — a 1998 Furby refurbished with an ESP32 brain
 **Status:** Draft 2 — framework and transport decided, hardware decisions partly open
-**Last updated:** 2026-09-07
+**Last updated:** 2026-09-12
 
 ---
 
@@ -349,7 +349,7 @@ Assistant and must not be conflated.
 | Electret microphone | Original | Preamp was on the removed mainboard |
 | Speaker | Original | Impedance and rating to be measured |
 | IR LED + IR receiver | Original | Forehead |
-| Eye LEDs | Added, already prepared | Must be able to go red for evil mode |
+| Eye LEDs | Added, already prepared | Red, not addressable; one GPIO, on/off ([HW-D8](#hw-d8--eye-leds)) |
 | ESP32 module | Added | See [HW-D1](#hw-d1--mcu-choice) |
 | Motor driver | Added | See [HW-D4](#hw-d4--motor-driver) |
 | Power supply | Added | See [HW-D5](#hw-d5--power) |
@@ -430,22 +430,17 @@ judgements are high confidence. The I²S route also shares a clock domain with t
 
 #### HW-D4 — Motor driver
 
-**Which driver is installed, not which to choose.** The legacy sketch drove the motor cleanly, so
-a working driver is in the build; only its part number was never recorded.
+**An Adafruit TB6612 breakout, channel A.** PWMA on GPIO13, AIN1 on GPIO12, AIN2 on GPIO14 —
+the three logic pins of [A1](#a1-legacy-pin-map), now with names. A MOSFET bridge rather than a
+bipolar one, which is what [HW-D5](#hw-d5--power) needs on a battery rail: an L298N-class part
+would have dropped roughly 2 V of a 3.0–4.2 V cell across its output stage.
 
-[A1](#a1-legacy-pin-map) shows three logic pins to the motor (PWM on GPIO13 via LEDC, forward on
-12, backward on 14). An ESP32 GPIO sources at most ~40 mA, far below a gearmotor's running
-current, and the original H-bridge left with the mainboard — so a driver module sits in between.
-The three-pin scheme (PWM + two direction inputs) matches a TB6612FNG or an L298N (ENA + IN1 +
-IN2), not a DRV8833, which takes two PWM inputs and has no separate enable.
+**Its STBY pin is unconnected in the plan**, and the driver stays in standby while that pin is
+low. It has to go somewhere, and a GPIO is the better answer than a tie to 3V3: it gives
+[F-72](#f-72--motor-safety-limits) a hard cut that does not depend on the PWM pin behaving. The
+pin budget in [HW-D6](#hw-d6--gpio-budget) has room for it. Recorded in `docs/hardware.md §5`.
 
-**Identification task:** read the part off the board and record it in `docs/hardware.md`. Check at
-the same time whether a **standby/enable pin** (the TB6612FNG has one) is tied high on the
-breakout or sits on a GPIO — if the latter, it is a fourth pin the firmware must drive. Keep the
-installed part unless it proves unsuitable; a TB6612FNG is the drop-in replacement, and it also
-matters for [HW-D5](#hw-d5--power) that an L298N-class part is a poor fit on a battery rail.
-
-**Two things the working motor does not settle:**
+**Two things the driver being known does not settle:**
 
 - **Stall and no-load current still need measuring**, but for [HW-D5](#hw-d5--power) rather than
   for the driver: they size the Qi budget, the battery's buffering role and the bulk capacitance.
@@ -485,10 +480,9 @@ operating model changes what the battery is *for*:
 
 - Whether the charging circuit is a 5 W (BPP) or 15 W (EPP) receiver. This sets the headroom the
   battery has to cover and should be settled with the part choice.
-- **Which motor driver is installed** ([HW-D4](#hw-d4--motor-driver)). An L298N-class bipolar
-  bridge drops roughly 2 V across its output stage — on a 3.0–4.2 V cell that is a large share of
-  the supply, and it worsens as the cell drains. A MOSFET driver such as the TB6612FNG does not.
-  If the installed part is bipolar, plan on replacing it for battery operation.
+- **The plan does not yet implement the separate motor rail.** The TB6612's Vmotor shares one net
+  with the ESP32's VIN, and the design contains no bulk capacitance anywhere. This is the
+  requirement above, unmet — see `docs/hardware.md §4`.
 
 **Risk to design against — permanent charging.** A Li-ion cell held at charge-termination voltage
 indefinitely, next to a Qi coil's waste heat, inside a closed plush enclosure, is the worst case
@@ -504,38 +498,29 @@ and therefore the pose the Furby normally sits in. An enclosure constraint, not 
 
 #### HW-D6 — GPIO budget
 
-Rough pin count for the full feature set:
+**The WROOM module has enough pins. No port expander.** The full map is in `docs/hardware.md §2`;
+this is what it adds up to.
 
-| Function | Pins |
-| --- | --- |
-| Motor (PWM + 2 direction) | 3 |
-| Cam encoder | 1 |
-| Sync switch | 1 |
-| Light sensor (ADC) | 1 |
-| Switches (tummy, back, tongue, tilt) | 4 |
-| IR receive / transmit | 2 |
-| Eye LEDs | 1–2 |
-| Microphone | 1 (analogue) / 2 (PDM) / 3 (I²S) |
-| Speaker | 1 (internal DAC) / 3 (I²S) |
-| Dock / charge state ([HW-D5](#hw-d5--power)) | 1–2 |
-| **Total** | **16–22** |
+Thirteen GPIOs are already assigned, and dropping the DFPlayer returns three. Against the seven
+unrestricted output-capable pins that leaves, the outstanding work needs six: the TB6612's STBY
+([HW-D4](#hw-d4--motor-driver)), four for an I²S microphone and amplifier sharing BCLK and WS,
+and one if [HW-D9](#hw-d9--a-second-eye-colour-channel) adds an eye channel. One pin spare, plus
+GPIO15 in reserve.
 
-**Constraints on top of the raw count:**
+That works because the two remaining *inputs* — the tilt switch and the dock/charge signal — go
+on GPIO36 and GPIO39, which are input-only and otherwise wasted. The cost is an external pull-up
+each, since GPIO34–39 have no internal ones. It is a resistor, not a pin.
 
-- **ADC1 only for the light sensor.** ADC2 is unusable while WiFi is active on the ESP32 classic,
-  so [F-21](#f-21--light-sensor) must sit on GPIO32–39 — of which GPIO34–39 are input-only. See
-  [HW-D1](#hw-d1--mcu-choice).
-- **Shared I²S clocks.** If both microphone and amplifier are I²S, they can share BCLK and WS,
-  so the pair costs about 4 pins rather than 6.
-- **Space, not just pins.** The wireless charging circuit from [HW-D5](#hw-d5--power) competes
-  for the same volume as any add-on board, which is a harder limit here than the pin count.
+**What still binds:**
 
-**Consequence:** very small boards (e.g. XIAO ESP32S3 at 21 × 17.5 mm) do **not** have enough
-usable GPIOs. Either use a full WROOM module, or add an I²C port expander (PCF8574) for the four
-slow switches, which brings the direct count down to ~14–20.
-
-**Recommendation:** full WROOM-class module. Reserve the expander as the fallback if the
-enclosure forces a smaller board.
+- **ADC1 only for the light sensor.** ADC2 is unusable while WiFi is active on the ESP32 classic.
+  The plan already has it on GPIO34, which is correct ([HW-D1](#hw-d1--mcu-choice)).
+- **An analogue microphone loosens everything.** It costs one ADC1 pin instead of three, which
+  turns the tight fit above into a comfortable one — worth remembering when
+  [HW-D2](#hw-d2--microphone) is settled, though it is not a reason to choose one.
+- **Space, not pins, is the real limit.** The wireless charging circuit from
+  [HW-D5](#hw-d5--power) competes for the same volume as any add-on board. The pin count is no
+  longer what constrains this build; the enclosure is.
 
 #### HW-D7 — Wake word strategy
 
@@ -574,16 +559,37 @@ towards a MEMS part.
 
 #### HW-D8 — Eye LEDs
 
-| Option | Pros | Cons |
-| --- | --- | --- |
-| **WS2812 / addressable** | 1 pin for both eyes, full colour, effects for the assistant states. | Timing-sensitive; needs RMT. |
-| **PWM red + white per eye** | Dead simple, no timing constraints. | 2–4 pins, limited palette. |
+**Red LEDs on a single GPIO, switched on or off.** Not addressable. Whether the pin drives them
+directly or through a MOSFET is unrecorded and does not matter to the firmware — either way the
+pin goes high or low.
 
-**Note:** the eye LEDs are already prepared in the build. This decision is really "what is
-already wired in?" — confirm before designing [F-22](#f-22--eye-lighting).
+The consequence runs deeper than one line of driver code: **the eyes carry one bit, not a
+colour.** Everything the eyes express has to be expressed in *time* — steady, pulsing, blinking
+fast — which is what [F-22](#f-22--eye-lighting) and [F-44](#f-44--assistant-state-feedback) are
+written against. That the LEDs happen to be red keeps the Furby's most recognisable visual note
+available; it just cannot be switched off in favour of another colour.
 
-**Recommendation:** WS2812 if the existing wiring allows, because the assistant states
-(listening / thinking / speaking / error) benefit greatly from colour.
+Brightness is a possibility, not a promise: PWM on the same pin should dim them, and the bench
+prototype confirms it dims smoothly and without visible flicker before
+[F-22](#f-22--eye-lighting) relies on it.
+
+#### HW-D9 — A second eye colour channel
+
+**Open.** [HW-D8](#hw-d8--eye-leds) leaves the eyes with a single red channel, which is enough
+for state and mode *patterns* but cannot distinguish modes by colour. A second channel — one
+more GPIO driving a differently coloured LED, or replacing both eyes with WS2812 — would restore
+that, at the cost of soldering inside a finished head.
+
+Two things gate it, and neither is a matter of opinion:
+
+- **A free GPIO** — answered. [HW-D6](#hw-d6--gpio-budget) has one to spare for it.
+- **Physical space in the head**, which already holds the IR pair, the light sensor and whatever
+  [HW-D2](#hw-d2--microphone) lands on. Still open, and answered by looking; `docs/hardware.md §8`
+  is where the answer goes.
+
+**Resolve before [M4](#8-milestones)** — [F-50](#f-50--mode-manager) is the first feature that
+would use a colour distinction, and it is an M4 feature. [F-22](#f-22--eye-lighting) is built
+single-channel in M2 regardless; a second channel extends it rather than changing it.
 
 ---
 
@@ -591,7 +597,7 @@ already wired in?" — confirm before designing [F-22](#f-22--eye-lighting).
 
 | ID | Milestone | Contents | Exit criterion |
 | --- | --- | --- | --- |
-| **M0** | Decisions & measurements | ARCH-D1/D2/D3 ✅, HW-D1/D5/D7 ✅; remaining: ARCH-D4, HW-D2, HW-D3, HW-D4, HW-D6, HW-D8. Includes the **bench prototype** in [§8.1](#81-the-bench-prototype-m0) | All decisions resolved and recorded in §13, each measurement-gated one backed by a number from the bench |
+| **M0** | Decisions & measurements | ARCH-D1/D2/D3 ✅, HW-D1/D4/D5/D6/D7/D8 ✅; remaining: ARCH-D4, HW-D2, HW-D3, HW-D9. Includes the **bench prototype** in [§8.1](#81-the-bench-prototype-m0) | All decisions resolved and recorded in §13, each measurement-gated one backed by a number from the bench |
 | **M1** | Foundation | F-01, F-02 | Device boots, is reachable, can be updated over the air |
 | **M2** | Motion | F-10, F-11, F-20, F-21, F-22 | The Furby homes, holds named poses, and reacts physically to touch |
 | **M3** | Audio & voice | F-40, F-41, F-42, F-45 | The Furby is a Wyoming satellite in Home Assistant and a full voice interaction works end to end, push-to-talk and docked wake word |
@@ -603,11 +609,10 @@ IR (F-30/F-31) is deliberately late: it is delightful but not on the critical pa
 
 ### 8.1 The bench prototype (M0)
 
-Four decisions — [HW-D2](#hw-d2--microphone), [HW-D3](#hw-d3--speaker-and-amplifier),
-[HW-D4](#hw-d4--motor-driver) and [HW-D5](#hw-d5--power) — are gated on numbers that no
-specification can supply. The estimates recorded against them are reasoning, not results. So M0
-gets a deliverable of its own: **a deliberately crude rig on the bench, built to answer those
-questions and then thrown away.**
+Three decisions — [HW-D2](#hw-d2--microphone), [HW-D3](#hw-d3--speaker-and-amplifier) and
+[HW-D5](#hw-d5--power) — are gated on numbers that no specification can supply, and the estimates
+recorded against them are reasoning, not results. So M0 gets a deliverable of its own: **a
+deliberately crude rig on the bench, built to answer those questions and then thrown away.**
 
 It is *not* the Furby. Nothing is mounted, nothing is tidy, no enclosure is involved. It exists to
 produce measurements.
@@ -616,10 +621,10 @@ produce measurements.
 | --- | --- |
 | Capture from a microphone and report the level in dBFS, with switchable gain | [HW-D2](#hw-d2--microphone) — record the original electret through a preamp, close-talk **and** at ~1 m, and compare it against an I²S MEMS part on the same rig |
 | Play an audio file through a speaker | [HW-D3](#hw-d3--speaker-and-amplifier) — judge a TTS sample through the original transducer for *intelligibility*, and compare the internal-DAC path against an I²S amplifier |
-| Drive the motor with the [A2](#a2-motor-drive-parameters) parameters while current is measured | [HW-D4](#hw-d4--motor-driver) / [HW-D5](#hw-d5--power) — no-load, running and stall current, plus the inrush peak with WiFi transmitting |
+| Drive the motor with the [A2](#a2-motor-drive-parameters) parameters while current is measured | [HW-D5](#hw-d5--power) — no-load, running and stall current, plus the inrush peak with WiFi transmitting. These size the Qi budget, the battery's buffering role and the bulk capacitance |
 | Read the cam encoder and the sync switch and count edges | Confirm the ≈ 416 steps per revolution from [§3.1](#31-mechanics) and that the sync switch gives a repeatable zero — the one thing the legacy sketch never proved |
 
-**Deliverable:** the numbers, written into `docs/hardware.md`, and the four decisions closed in
+**Deliverable:** the numbers, written into `docs/hardware.md`, and the three decisions closed in
 [§13](#13-open-questions--decision-log) on the strength of them. Prototype code is throwaway and
 does not have to meet [F-02](#f-02--repository-layout-build-and-validation); it should live
 clearly separated from the firmware so nobody mistakes it for the real thing.
@@ -634,7 +639,8 @@ skeleton. Everything else in M1 waits until M0's numbers are in, because
 ## 9. Feature Catalogue
 
 Each feature: **Goal** — one sentence. **Description** — what it does. **Acceptance** — how we
-know it works. **Depends on** — prerequisites. Status is `planned` for all features in Draft 1.
+know it works. **Depends on** — prerequisites. A **Status** line appears only where a feature
+is no longer simply `planned`.
 
 ### Foundation
 
@@ -653,14 +659,24 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 
 #### F-02 — Repository layout, build and validation
 
-- **Goal:** anyone can build and check the firmware with one command.
+- **Goal:** anyone can build, test and check the firmware with one command.
 - **Description:** a documented repository layout, a reproducible PlatformIO build, secrets kept
-  out of version control, and a CI job that at minimum compiles the firmware on every push.
-  `platformio.ini` must pin the `pioarduino` platform fork explicitly — see
-  [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain).
-- **Acceptance:** a clean checkout builds; CI fails on a deliberately broken build; no
-  credentials are present in the repository.
+  out of version control, a **host-run unit-test suite**, and a CI job that compiles the
+  firmware and runs the suite on every push. `platformio.ini` must pin the `pioarduino`
+  platform fork explicitly — see [ARCH-D3](#53-arch-d3--framework-flavour-and-toolchain).
+  The suite runs on the development machine, not the device, which puts a design constraint on
+  every module that follows: hardware-independent logic lives in its own `lib/` module and does
+  not include `Arduino.h`, so a test can link it directly. `firmware/test/README.md` holds the
+  convention.
+- **Acceptance:** a clean checkout builds; the test suite runs without an ESP32 attached; CI
+  fails both on a deliberately broken build and on a failing test; no credentials are present
+  in the repository.
 - **Depends on:** ARCH-D1, ARCH-D3.
+- **Status:** the layout, the pinned build, the host test suite and the CI job exist, and a
+  clean checkout compiles and tests green. What the firmware compiles is a skeleton that drives
+  no hardware — that is [F-01](#f-01--base-node)'s job, and it waits on M0. The suite is
+  likewise a harness with one smoke test: there is no behaviour to test until the first module
+  from [§6.3](#63-module-boundaries) exists.
 - **Milestone:** M1.
 
 ### Motion
@@ -748,16 +764,22 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 
 #### F-22 — Eye lighting
 
-- **Goal:** the eyes light up, and can go red.
-- **Description:** the eye LEDs are exposed as a controllable light with colour and brightness.
-  Beyond manual control, the eyes convey state: assistant states (idle / listening / thinking /
-  speaking / error) and mode (notably **red in evil mode**, per
-  [F-50](#f-50--mode-manager)). Brightness must follow the quiet-hours schedule so the Furby
-  does not glow at full power at night.
-- **Acceptance:** eyes can be set to any colour from Home Assistant; evil mode turns them red
-  and normal mode restores them; the assistant states are visually distinguishable across the
-  room.
+- **Goal:** the eyes light up, and say something by *how* they light up.
+- **Description:** the eyes are one red channel on one GPIO ([HW-D8](#hw-d8--eye-leds)), exposed
+  as a switchable light. Because there is no colour to vary, the expressive vocabulary is
+  temporal: **off, steady, slow pulse, fast blink**, and a named pattern is what the rest of the
+  firmware asks for — never a colour. The assistant states of
+  [F-44](#f-44--assistant-state-feedback) and the modes of [F-50](#f-50--mode-manager) each map
+  onto one pattern, and the mapping is a table, not code.
+  Quiet hours must reach the eyes: if PWM dimming proves usable
+  ([HW-D8](#hw-d8--eye-leds)) the night level is a dim one, otherwise it is off.
+- **Acceptance:** each named pattern is distinguishable from the others across a room; a pattern
+  keeps running unattended without drift or flicker; the eyes can be switched from Home
+  Assistant; the quiet-hours level takes effect at the configured time.
 - **Depends on:** F-01, HW-D8.
+- **Implementation note:** [HW-D9](#hw-d9--a-second-eye-colour-channel) may later add a second
+  colour channel. Keep the pattern table the interface, so that a second channel becomes a new
+  column rather than a rewrite.
 - **Milestone:** M2.
 
 ### Infrared
@@ -861,7 +883,8 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 
 - **Goal:** you can see what the Furby is doing without listening.
 - **Description:** the assistant's states drive the eyes and the body: *listening* (e.g. ears up,
-  eyes wide, a distinct eye colour), *thinking*, *speaking* (mouth animation via
+  eyes wide, a distinct eye pattern per [F-22](#f-22--eye-lighting)), *thinking*, *speaking*
+  (mouth animation via
   [F-12](#f-12--talk-animation)), *error* (a visible, unmistakable signal). Feedback must
   degrade gracefully during quiet hours — visual only, no motor.
 - **Acceptance:** an observer can tell listening from thinking from speaking across a room; an
@@ -895,12 +918,14 @@ know it works. **Depends on** — prerequisites. Status is `planned` for all fea
 - **Goal:** the Furby has three personalities, and remembers which one it is in.
 - **Description:** a mode of `normal`, `cute` or `evil`, settable from Home Assistant and from
   physical interaction, persisted across reboots. Changing mode has an immediate visible and
-  audible effect: **evil mode turns the eyes red**, and the mode change is announced with the
-  corresponding phrase from the catalogue (`002-Cute-Mode` / `002-Evil-Mode`). Mode influences
-  the TTS voice ([F-43](#f-43--mode-dependent-voice)), the eye colour, the reaction table and
-  the phrase variant chosen for an event.
-- **Acceptance:** setting evil mode turns the eyes red, announces it, and the next phrase uses
-  the evil voice; the mode survives a power cycle; every mode has a defined eye colour.
+  audible effect: **evil mode lights the eyes and keeps them lit**, where the other modes leave
+  them to the assistant states, and the mode change is announced with the corresponding phrase
+  from the catalogue (`002-Cute-Mode` / `002-Evil-Mode`). Mode influences the TTS voice
+  ([F-43](#f-43--mode-dependent-voice)), the eye pattern, the reaction table and the phrase
+  variant chosen for an event.
+- **Acceptance:** setting evil mode lights the eyes, announces it, and the next phrase uses the
+  evil voice; leaving evil mode returns the eyes to the normal behaviour; the mode survives a
+  power cycle; every mode has a defined eye pattern.
 - **Depends on:** F-22, F-42, ARCH-D4.
 - **Milestone:** M4.
 
@@ -1060,7 +1085,7 @@ This contract is carried by **two separate transports**, and it matters which on
 | --- | --- | --- |
 | Mode | select (`normal` / `cute` / `evil`) | Read and set the personality |
 | Volume | number (%) | Current speaking volume |
-| Eyes | light | Colour and brightness |
+| Eyes | light (on/off, brightness if PWM proves usable) | Manual override of the eye pattern ([F-22](#f-22--eye-lighting)); no colour, see [HW-D8](#hw-d8--eye-leds) |
 | Quiet hours enabled | switch | Master switch for the schedule |
 | Play animation | action (name) | Trigger a named animation |
 | Speak | `assist_satellite.announce` | The [F-61](#f-61--speak-interface) entry point — the one control that *does* come from the Wyoming side |
@@ -1104,6 +1129,7 @@ Names are stable. Payloads carry at least the triggering source and a timestamp.
 | NFR-6 | **Latency.** Push-to-talk to "listening" feedback is perceptually immediate; the end-to-end voice interaction is not noticeably slower than a comparable Home Assistant voice satellite. |
 | NFR-7 | **Editability.** Phrases, the pose table and the reaction table can all be changed without recompiling firmware. |
 | NFR-8 | **No secrets in the repository.** Credentials and tokens come from an ignored local file. |
+| NFR-9 | **Testability.** Logic that does not touch hardware is a `lib/` module free of `Arduino.h`, covered by unit tests that run on the host. CI runs them on every push ([F-02](#f-02--repository-layout-build-and-validation)). |
 
 ---
 
@@ -1112,20 +1138,24 @@ Names are stable. Payloads carry at least the triggering source and a timestamp.
 ```
 esp32-furby/
 ├── README.md
+├── .github/workflows/          ← CI; builds the firmware on every push
 ├── docs/
 │   ├── FSD.md                  ← this document
 │   ├── hardware.md             ← pin map, wiring, measurements (from M0)
 │   └── decisions/              ← one file per resolved decision, if they grow
 ├── firmware/                   ← PlatformIO project (ARCH-D3)
-│   ├── platformio.ini          ← pins the pioarduino platform fork
+│   ├── platformio.ini          ← pins the pioarduino platform fork; env `furby` + env `native`
 │   ├── include/
-│   ├── src/                    ← one directory per module from §6.3
-│   ├── lib/
+│   ├── src/                    ← the layer that touches hardware
+│   ├── lib/                    ← one library per module from §6.3, free of Arduino.h
+│   ├── test/                   ← host-run unit tests (env `native`)
 │   └── config.example.h        ← template; the real config.h is git-ignored
 └── homeassistant/
     ├── packages/               ← phrase catalogue, event automations
     └── blueprints/
 ```
+
+Directories appear when they get content; `homeassistant/` arrives with M5.
 
 Credentials live only in the ignored `firmware/config.h`
 ([NFR-8](#11-non-functional-requirements)). The legacy `config.h` in the project history was
@@ -1142,9 +1172,7 @@ deliberately emptied before sharing and stays that way.
 | [ARCH-D4](#54-arch-d4--control-and-event-transport) | Control and event transport | F-50, F-62, F-63, §10 | Open — MQTT with HA discovery recommended; resolve before M4 |
 | [HW-D2](#hw-d2--microphone) | Original electret vs. MEMS microphone | F-41 | Open — measurement pending; estimate favours MEMS given HW-D7 |
 | [HW-D3](#hw-d3--speaker-and-amplifier) | Speaker and amplifier path | F-40 | Open — measurement pending; estimate favours original transducer + I²S amp |
-| [HW-D4](#hw-d4--motor-driver) | Motor driver | F-10 | Open, but reduced to identifying the driver already installed — the legacy sketch drove the motor cleanly through it |
-| [HW-D6](#hw-d6--gpio-budget) | GPIO budget / port expander | All | Open — depends on enclosure |
-| [HW-D8](#hw-d8--eye-leds) | Eye LED type | F-22 | Open — confirm what is already wired |
+| [HW-D9](#hw-d9--a-second-eye-colour-channel) | A second eye colour channel | F-50 (colour as a mode signal) | Open — a GPIO is available; now gated only on space in the head. Resolve before M4 |
 
 ### 13.2 Open questions
 
@@ -1155,21 +1183,17 @@ deliberately emptied before sharing and stays that way.
 2. **Cam position table.** The named poses in [F-11](#f-11--named-poses-and-animation-sequencer)
    must be calibrated against the actual gearbox. Is a reference table from the original
    available, or do we measure all of them empirically during M2?
-3. **Eye LED wiring.** What is already installed — addressable or discrete? ([HW-D8](#hw-d8--eye-leds))
-4. **Motor driver part.** Which driver module is physically in the build? The legacy sketch drove
-   the motor cleanly on three logic pins, so one is there ([HW-D4](#hw-d4--motor-driver)); the
-   part number was never written down. Same shape as question 3 — read it off the board.
-5. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
+3. **Second Furby.** Is one available for testing [F-30](#f-30--infrared-receive) /
    [F-31](#f-31--infrared-transmit), or do we test against recorded codes only?
-6. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
+4. **Meaning of IR messages #2 and #8.** Their frames are known and reproducible
    ([A3](#a3-the-infrared-protocol-decoded)), but not what they say. Two ways to find out:
    transmit them at a real Furby and watch, or mine the original source listing
    ([A8](#a8-sources)) once it is reachable.
-7. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
+5. **Satellite discovery.** How does Home Assistant find the Wyoming satellite
    ([ARCH-D2](#52-arch-d2--home-assistant-voice-transport)) — does the device announce itself over
    zeroconf, or is it added manually by host and port? The manual route is simpler to build and
    needs a fixed address; zeroconf is friendlier and survives a DHCP change.
-8. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
+6. **Wake word cross-triggering.** Does "Hey Furby" false-trigger on "Ok Nabu" in the same room?
    The verification task is in [HW-D7](#hw-d7--wake-word-strategy): say "Ok Nabu" twenty times
    with both models enabled and count. The phrase itself is agreed; this checks it in practice
    and is cheap to redo if it fails.
@@ -1188,6 +1212,9 @@ deliberately emptied before sharing and stays that way.
 | [HW-D1](#hw-d1--mcu-choice) | **ESP32 classic**, WROOM-class module — on hand, familiar, legacy pin map transfers; the S3 buys nothing once wake word runs server-side | 2026-09-07 |
 | [HW-D5](#hw-d5--power) | **Li-ion + wireless charging, mostly docked.** The battery is a peak buffer for motor inrush, not an energy store | 2026-09-07 |
 | [HW-D7](#hw-d7--wake-word-strategy) | **Two trigger modes by dock state:** docked → continuous stream with server-side wake word; undocked → push-to-talk. Phrase **"Hey Furby"** — "Ok Furby" would collide with "Ok Nabu" in the same room | 2026-09-07 |
+| [HW-D8](#hw-d8--eye-leds) | **Red LEDs, one GPIO, on/off** — not addressable. The eyes carry a pattern, never a colour; F-22, F-44 and F-50 are written against that | 2026-09-08 |
+| [HW-D4](#hw-d4--motor-driver) | **Adafruit TB6612**, channel A, on the legacy three pins — a MOSFET bridge, which is what a battery rail needs. Its STBY pin goes on a GPIO | 2026-09-12 |
+| [HW-D6](#hw-d6--gpio-budget) | **The WROOM module suffices; no port expander.** The tilt switch and the dock signal go on the input-only GPIO36/39 with external pull-ups | 2026-09-12 |
 
 ---
 
@@ -1209,8 +1236,13 @@ Preserved from `SmartFurby.ino` and `config.h` because it encodes real hardware 
 | Motor backward | 14 | |
 | MP3 module RX / TX | 16 / 17 | Obsolete — the DFPlayer is dropped |
 
-Note: the legacy map has **no sync switch pin**. Since the sync switch is now confirmed as
-wired, the new pin map must add it — see `docs/hardware.md` (to be created in M0).
+**This is what the sketch used, not what the device has.** The working map is
+`docs/hardware.md §2`. Three rows above are actively misleading if carried across:
+
+- **GPIO2 is not a status LED.** It drives the eye LEDs through Q2.
+- **GPIO18 wants a pull-down, not `INPUT_PULLUP`.** The phototransistor feeds the pin from 3V3.
+  The sketch only ever had a stub there, so the value was never exercised.
+- **The sync switch is missing here.** It is on GPIO32.
 
 ### A2. Motor drive parameters
 
